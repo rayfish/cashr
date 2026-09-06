@@ -11,8 +11,14 @@ pub mod approval;
 pub mod client;
 pub mod error;
 pub mod keystore;
+pub mod pairing;
 pub mod policy;
+pub mod session;
 pub mod storage;
 pub mod transport;
+pub mod vault;
 
 pub use error::{Result, SignerError};
+
+/// Project-wide alias so async and sync mutexes never look alike at a glance.
+pub type AsyncMutex<T> = tokio::sync::Mutex<T>;

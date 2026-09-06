@@ -75,4 +75,18 @@ pub trait KeyStore: Send + Sync + 'static {
     async fn public_key(&self, handle: KeyHandle) -> Result<PublicKey, KeyStoreError> {
         Ok(self.load(handle).await?.public_key())
     }
+
+    /// Load several keys under one authentication.
+    ///
+    /// The default loops, which on macOS would be one Touch ID prompt per key.
+    /// The Keychain backend overrides it with a shared `LAContext` so the user
+    /// is asked once, which is what "unlock once per launch" actually means
+    /// with more than one account.
+    async fn load_many(&self, handles: &[KeyHandle]) -> Result<Vec<Keys>, KeyStoreError> {
+        let mut keys = Vec::with_capacity(handles.len());
+        for handle in handles {
+            keys.push(self.load(*handle).await?);
+        }
+        Ok(keys)
+    }
 }

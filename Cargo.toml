@@ -10,6 +10,7 @@ rust-version = "1.85"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
+getrandom = "0.4"
 nostr = { version = "0.45", features = ["std", "os-rng", "nip04", "nip44", "nip46", "nip49"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 secrecy = "0.10"
