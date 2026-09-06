@@ -46,14 +46,7 @@ a fresh key every time looks like a different app to macOS and is refused
 access to the keys it stored last time. A stable identity is what stops your
 keys apparently vanishing after every rebuild.
 
-An entitlement is the other half of it. A key guarded by Touch ID lives in the
-data protection keychain, and macOS only lets an app in there if its signature
-carries a keychain access group. `src-tauri/Entitlements.plist` declares one,
-named after the bundle identifier; without it every write comes back
-`errSecMissingEntitlement`, which is why keys cannot be stored from a binary
-run straight out of cargo.
-
-`UNUserNotificationCenter` is the third reason. Unsigned bundles commonly get
+`UNUserNotificationCenter` is the other reason. Unsigned bundles commonly get
 "Notifications are not allowed for this application" and post nothing, which
 costs the Approve/Reject buttons. The tray badge and the window still list
 pending requests, so it degrades rather than breaks.
@@ -68,16 +61,24 @@ Apple Developer Program plus notarization and stapling. Nothing in the project
 blocks that: set `APPLE_SIGNING_IDENTITY` to the Developer ID instead, and add
 the notarization credentials the Tauri CLI reads.
 
-The bundle identifier `dgrr.tray.byrgi` is the Keychain service name, the
-keychain access group and the notification registration. Changing it orphans
-every stored key.
+The bundle identifier `dgrr.tray.byrgi` is the Keychain service name and the
+notification registration. Changing it orphans every stored key.
 
 ## How it works
 
 Each account has two keys. The identity key is your npub and signs your
 events. The transport key is what the bunker listens on, so relay operators do
 not get a log of which apps connect to which npub. Both live in one Keychain
-item per account, which makes unlocking an account a single Touch ID prompt.
+item per account, and unlocking asks for Touch ID once for all of them.
+
+The prompt comes from the app, through LocalAuthentication, rather than from
+the Keychain. An item the Keychain guards itself has to live in the data
+protection keychain, and macOS only admits an app whose signature carries a
+keychain access group. That entitlement is restricted, so a build carrying it
+without a provisioning profile will not launch at all, which puts it behind a
+paid Developer ID. The item is still bound to this app's code signature, so
+another program reading it meets the login password prompt; what the trade
+costs is that code running as you inside this bundle would not have to ask.
 
 Pairing works in both directions, and the two are not symmetric. `bunker://`
 is minted here and pasted into the client, which then sends a `connect` this

@@ -22,6 +22,7 @@ block2 = "0.6"
 core-foundation = "0.10"
 objc2 = "0.6"
 objc2-foundation = "0.3"
+objc2-local-authentication = "0.3"
 objc2-user-notifications = { version = "0.3", features = [
     "UNNotificationAction",
     "UNNotificationCategory",

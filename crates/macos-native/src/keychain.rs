@@ -1,14 +1,21 @@
-//! Keys in the macOS Keychain, guarded by Touch ID.
+//! Keys in the macOS Keychain, behind a Touch ID prompt.
 //!
-//! One item per account holds both of that account's secret keys. Keeping them
-//! together means unlocking an account is one Keychain read and therefore one
-//! Touch ID prompt, rather than two.
+//! One item per account holds both of that account's secret keys, so unlocking
+//! an account is one Keychain read rather than two.
+//!
+//! The prompt comes from `presence`, not from the Keychain: an item the
+//! Keychain itself guards has to live in the data protection keychain, which
+//! needs a restricted entitlement and therefore a paid Developer ID. The item
+//! is still bound to this app's code signature, which is what keeps other
+//! programs out of it. See `presence` for what that trade costs.
 
 use async_trait::async_trait;
 use nostr::key::{Keys, SecretKey};
 use serde::{Deserialize, Serialize};
 use signer_core::account::AccountId;
 use signer_core::keystore::{AccountKeys, KeyHandle, KeyRole, KeyStore, KeyStoreError};
+
+use crate::presence;
 
 /// Both of an account's secret keys, as stored in one Keychain item.
 ///
@@ -54,11 +61,11 @@ impl KeychainKeyStore {
     fn item_name(account: AccountId) -> String {
         format!("account.{account}")
     }
-}
 
-#[async_trait]
-impl KeyStore for KeychainKeyStore {
-    async fn load(&self, handle: KeyHandle) -> Result<Keys, KeyStoreError> {
+    /// The read itself. Presence is asked for once by the caller, so this must
+    /// not be public: nothing outside should be able to reach a key without
+    /// going past the prompt.
+    fn read(&self, handle: KeyHandle) -> Result<Keys, KeyStoreError> {
         let stored = platform::read(&self.service, &Self::item_name(handle.account))?
             .ok_or(KeyStoreError::NotFound(handle))?;
         let hex = stored.role(handle.role);
@@ -69,11 +76,22 @@ impl KeyStore for KeychainKeyStore {
             .map_err(|e| KeyStoreError::Backend(format!("stored key is unreadable: {e}")))?;
         Ok(Keys::new(secret))
     }
+}
 
-    /// Both keys in one write. The item holds the pair, so writing one at a
-    /// time would mean reading the other back first, and reading an item
-    /// guarded by USER_PRESENCE asks for Touch ID: creating an account would
-    /// prompt for a key the app had just generated itself.
+/// Completes the sentence macOS shows: "Byrgi is trying to ...".
+const UNLOCK_REASON: &str = "unlock your nostr keys";
+
+#[async_trait]
+impl KeyStore for KeychainKeyStore {
+    async fn load(&self, handle: KeyHandle) -> Result<Keys, KeyStoreError> {
+        presence::require(UNLOCK_REASON).await?;
+        self.read(handle)
+    }
+
+    /// Both keys in one write, and no prompt: the item holds the pair, so
+    /// writing one at a time would mean reading the other back first, and
+    /// creating an account would ask for Touch ID over a key the app had just
+    /// generated itself.
     async fn store(&self, account: AccountId, keys: &AccountKeys) -> Result<(), KeyStoreError> {
         platform::write(&self.service, &Self::item_name(account), &keys.into())
     }
@@ -82,14 +100,13 @@ impl KeyStore for KeychainKeyStore {
         platform::delete(&self.service, &Self::item_name(account))
     }
 
+    /// One prompt for every key, which is what unlocking the app is.
     async fn load_many(&self, handles: &[KeyHandle]) -> Result<Vec<Keys>, KeyStoreError> {
-        // Both roles of one account come out of a single item, so a two-key
-        // account costs one prompt. Several accounts still cost one prompt
-        // each; sharing an `LAContext` across those reads would collapse them
-        // into one, and is the obvious next refinement.
+        presence::require(UNLOCK_REASON).await?;
+
         let mut keys = Vec::with_capacity(handles.len());
         for handle in handles {
-            keys.push(self.load(*handle).await?);
+            keys.push(self.read(*handle)?);
         }
         Ok(keys)
     }
@@ -97,10 +114,9 @@ impl KeyStore for KeychainKeyStore {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use security_framework::access_control::{ProtectionMode, SecAccessControl};
     use security_framework::passwords::set_generic_password_options;
     use security_framework::passwords::{delete_generic_password, generic_password};
-    use security_framework::passwords_options::{AccessControlOptions, PasswordOptions};
+    use security_framework::passwords_options::PasswordOptions;
     use signer_core::keystore::KeyStoreError;
 
     use super::StoredKeys;
@@ -112,7 +128,6 @@ mod platform {
     const NOT_AVAILABLE: i32 = -25291; // errSecNotAvailable
     const AUTH_FAILED: i32 = -25293; // errSecAuthFailed
     const USER_CANCELED: i32 = -128; // errSecUserCanceled
-    const MISSING_ENTITLEMENT: i32 = -34018; // errSecMissingEntitlement
 
     /// `Ok(None)` when the account has nothing stored. A missing item is an
     /// ordinary answer here, not a failure, and saying so in the type is what
@@ -137,26 +152,18 @@ mod platform {
         let bytes = serde_json::to_vec(keys)
             .map_err(|e| KeyStoreError::Backend(format!("cannot serialise keys: {e}")))?;
 
-        // `ThisDeviceOnly` keeps the item off iCloud Keychain and out of
-        // backups, so a key cannot leave this machine by accident.
-        // `USER_PRESENCE` accepts Touch ID or the device passcode, which is
-        // what makes this usable on a Mac with no working sensor.
-        let access = SecAccessControl::create_with_protection(
-            Some(ProtectionMode::AccessibleWhenUnlockedThisDeviceOnly),
-            AccessControlOptions::USER_PRESENCE.bits(),
-        )
-        .map_err(|e| KeyStoreError::Backend(format!("cannot build access control: {e}")))?;
-
-        // Replacing means deleting first: SecItemAdd refuses a duplicate, and
-        // SecItemUpdate cannot change the access control.
+        // Replacing means deleting first: SecItemAdd refuses a duplicate.
         match delete_generic_password(service, account) {
             Ok(()) => {}
             Err(e) if e.code() == NOT_FOUND => {}
             Err(e) => return Err(translate(e)),
         }
 
-        let mut options = PasswordOptions::new_generic_password(service, account);
-        options.set_access_control(access);
+        // No `kSecAttrAccessControl`: an item carrying one goes to the data
+        // protection keychain, which refuses an app without the entitlement.
+        // The item lands in the login keychain instead, readable only by this
+        // signed app, and `presence` is what asks for Touch ID.
+        let options = PasswordOptions::new_generic_password(service, account);
         set_generic_password_options(&bytes, options).map_err(translate)
     }
 
@@ -177,15 +184,6 @@ mod platform {
             // Mac that cannot authenticate at all, which is NOT_AVAILABLE.
             AUTH_FAILED => KeyStoreError::AuthFailed,
             NOT_AVAILABLE => KeyStoreError::AuthUnavailable,
-            // An item guarded by Touch ID sits in the data protection
-            // keychain, which macOS only opens to an app signed with a
-            // keychain access group. The bundle carries one; a binary run
-            // straight from cargo does not.
-            MISSING_ENTITLEMENT => KeyStoreError::Backend(
-                "this build is not signed with the keychain entitlement, \
-                 so macOS will not store keys. Run a bundle from `just build`."
-                    .to_string(),
-            ),
             code => KeyStoreError::Backend(match error.message() {
                 Some(message) => format!("keychain error {code}: {message}"),
                 None => format!("keychain error {code}"),
