@@ -21,7 +21,7 @@ use signer_core::account::Account;
 use signer_core::approval::{ApprovalDecision, ApprovalRequest, Approver, NullNotifier};
 use signer_core::error::SignerError;
 use signer_core::keystore::{KeyHandle, KeyRole, KeyStore, KeyStoreError};
-use signer_core::pairing::{accept_client_uri, mint_bunker_uri};
+use signer_core::pairing::{accept_client_uri, mint_bunker_uri, parse_client_uri};
 use signer_core::policy::{Decision, Outcome, Scope};
 use signer_core::session::{Session, SessionConfig, SessionParts};
 use signer_core::storage::{NewAccount, Storage};
@@ -419,6 +419,15 @@ async fn a_nostrconnect_pairing_echoes_the_clients_secret() {
         } => assert_eq!(echoed, secret),
         other => panic!("expected the secret echoed back, got {other:?}"),
     }
+
+    // The name in the URI is the only thing that makes a prompt readable, so
+    // it has to survive from the paste to the client row.
+    let client = harness
+        .storage
+        .client_by_public_key(harness.account.id, &harness.client.public_key())
+        .expect("the client row reads back")
+        .expect("connect created a client");
+    assert_eq!(client.name.as_deref(), Some("Test App"));
 }
 
 #[tokio::test]
@@ -829,4 +838,57 @@ fn client_facing_errors_stay_coarse() {
     );
     assert_eq!(SignerError::Denied.client_message(), "denied");
     assert_eq!(SignerError::Expired.client_message(), "timed out");
+}
+
+#[tokio::test]
+async fn accepting_a_nostrconnect_uri_sends_the_ack_unprompted() {
+    let harness = Harness::new(ScriptedApprover::new(ApprovalDecision::allow_once())).await;
+    harness.unlock().await;
+
+    // The shape a browser client actually produces: flat parameters, and no
+    // request of its own. It is sitting on its relays waiting to be answered.
+    let uri = format!(
+        "nostrconnect://{}?relay=wss%3A%2F%2Frelay.example%2F&secret=s3cret&name=example.app",
+        harness.client.public_key().to_hex()
+    );
+    let parsed = parse_client_uri(&uri).expect("a current client URI parses");
+    let pairing = accept_client_uri(
+        &harness.storage,
+        &harness.account,
+        &parsed,
+        Duration::from_secs(300),
+    )
+    .expect("uri is accepted");
+
+    let ack = harness
+        .session
+        .accept_pairing(
+            &harness.account,
+            &pairing.client_public_key,
+            &pairing.secret,
+        )
+        .await
+        .expect("the ack is minted");
+
+    assert_eq!(ack.kind, Kind::NostrConnect);
+    assert_eq!(ack.pubkey, harness.account.signer_public_key);
+
+    match harness.open(&ack, NostrConnectMethod::Connect) {
+        ClientResponse::Ok {
+            result: ResponseResult::ConnectSecret(echoed),
+            ..
+        } => assert_eq!(echoed, "s3cret"),
+        other => panic!("expected the secret echoed back, got {other:?}"),
+    }
+
+    // And the pairing is spent, so the same URI cannot be replayed.
+    assert!(harness
+        .session
+        .accept_pairing(
+            &harness.account,
+            &pairing.client_public_key,
+            &pairing.secret
+        )
+        .await
+        .is_err());
 }

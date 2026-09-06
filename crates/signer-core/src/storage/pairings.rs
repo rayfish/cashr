@@ -35,6 +35,8 @@ pub struct Pairing {
     /// Known up front for `nostrconnect://`, learned at connect time for
     /// `bunker://`.
     pub client_public_key: Option<PublicKey>,
+    /// The name the app gave in its URI. `bunker://` carries none.
+    pub client_name: Option<String>,
     pub created_at: Timestamp,
     pub expires_at: Timestamp,
     pub consumed_at: Option<Timestamp>,
@@ -52,6 +54,7 @@ pub struct NewPairing {
     pub secret: String,
     pub direction: PairingDirection,
     pub client_public_key: Option<PublicKey>,
+    pub client_name: Option<String>,
     pub expires_at: Timestamp,
 }
 
@@ -62,13 +65,15 @@ impl Storage {
 
         conn.execute(
             "INSERT INTO pairings
-                (account_id, secret, direction, client_public_key, created_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                (account_id, secret, direction, client_public_key, client_name,
+                 created_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 new.account.get(),
                 new.secret,
                 new.direction.as_str(),
                 new.client_public_key.map(|pk| pk.to_hex()),
+                new.client_name,
                 created_at.as_secs() as i64,
                 new.expires_at.as_secs() as i64,
             ],
@@ -80,6 +85,7 @@ impl Storage {
             secret: new.secret,
             direction: new.direction,
             client_public_key: new.client_public_key,
+            client_name: new.client_name,
             created_at,
             expires_at: new.expires_at,
             consumed_at: None,
@@ -93,7 +99,7 @@ impl Storage {
         Ok(conn
             .query_row(
                 "SELECT id, account_id, secret, direction, client_public_key,
-                        created_at, expires_at, consumed_at
+                        created_at, expires_at, consumed_at, client_name
                  FROM pairings
                  WHERE secret = ?1 AND consumed_at IS NULL AND expires_at > ?2",
                 params![secret, now],
@@ -134,6 +140,7 @@ fn row_to_pairing(row: &Row<'_>) -> rusqlite::Result<Pairing> {
     let created_at: i64 = row.get(5)?;
     let expires_at: i64 = row.get(6)?;
     let consumed_at: Option<i64> = row.get(7)?;
+    let client_name: Option<String> = row.get(8)?;
 
     let direction = match direction.as_str() {
         "bunker" => PairingDirection::Bunker,
@@ -160,6 +167,7 @@ fn row_to_pairing(row: &Row<'_>) -> rusqlite::Result<Pairing> {
         secret: row.get(2)?,
         direction,
         client_public_key,
+        client_name,
         created_at: Timestamp::from_secs(created_at.max(0) as u64),
         expires_at: Timestamp::from_secs(expires_at.max(0) as u64),
         consumed_at: consumed_at.map(|secs| Timestamp::from_secs(secs.max(0) as u64)),

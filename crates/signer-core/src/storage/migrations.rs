@@ -78,6 +78,11 @@ const MIGRATIONS: &[&str] = &[
 
     CREATE INDEX activity_created ON activity (created_at DESC);
     "#,
+    // v2: the app name a `nostrconnect://` URI carried, so the client row and
+    // every prompt after it can say who is asking.
+    r#"
+    ALTER TABLE pairings ADD COLUMN client_name TEXT;
+    "#,
 ];
 
 pub fn apply(conn: &Connection) -> Result<()> {

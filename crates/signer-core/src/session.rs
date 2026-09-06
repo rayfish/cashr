@@ -21,6 +21,7 @@ use crate::approval::{describe, ApprovalRequest, Approver, Notifier, SignerEvent
 use crate::client::{Client, PairingDirection};
 use crate::error::{Result, SignerError};
 use crate::keystore::KeyStore;
+use crate::pairing::random_hex;
 use crate::policy::{Decision, Outcome, Scope};
 use crate::storage::{ActivityOutcome, ActivitySource, NewActivity, Storage};
 use crate::vault::Vault;
@@ -56,6 +57,9 @@ pub struct SessionParts {
     pub notifier: Arc<dyn Notifier>,
     pub config: SessionConfig,
 }
+
+/// Bytes of entropy in an invented NIP-46 request id.
+const REQUEST_ID_BYTES: usize = 8;
 
 /// An event that arrived while the signer was locked.
 struct Deferred {
@@ -189,6 +193,43 @@ impl Session {
         Some(sealed)
     }
 
+    /// Answer a `nostrconnect://` pairing without waiting to be asked.
+    ///
+    /// This direction has the signer speak first. The client that minted the
+    /// URI is already listening for a response carrying its own secret back,
+    /// and it never sends a `connect` request of its own, so nothing happens
+    /// until this event goes out.
+    ///
+    /// Returns the event to publish on the relays the client named.
+    pub async fn accept_pairing(
+        &self,
+        account: &Account,
+        client_public_key: &PublicKey,
+        secret: &str,
+    ) -> Result<Event> {
+        if !self.vault.holds(account.id) {
+            return Err(SignerError::Locked);
+        }
+
+        let result = self
+            .connect(
+                account,
+                client_public_key,
+                &account.signer_public_key,
+                Some(secret),
+            )
+            .await?;
+
+        // No request means no request id, so this one is ours to pick. Clients
+        // match the ack by the secret in its result, not by the id.
+        let id = random_hex(REQUEST_ID_BYTES)?;
+        self.vault.seal_envelope(
+            account.id,
+            *client_public_key,
+            NostrConnectMessage::response(id, NostrConnectResponse::with_result(result)),
+        )
+    }
+
     async fn dispatch(
         &self,
         account: &Account,
@@ -266,7 +307,9 @@ impl Session {
         }
 
         self.storage.consume_pairing(pairing.id, sender)?;
-        let client = self.storage.upsert_client(account.id, sender, None)?;
+        let client =
+            self.storage
+                .upsert_client(account.id, sender, pairing.client_name.as_deref())?;
 
         self.notifier.notify(SignerEvent::ClientConnected {
             account: account.id,

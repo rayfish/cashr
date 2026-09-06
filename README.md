@@ -71,10 +71,17 @@ events. The transport key is what the bunker listens on, so relay operators do
 not get a log of which apps connect to which npub. Both live in one Keychain
 item per account, which makes unlocking an account a single Touch ID prompt.
 
-Pairing works in both directions. `bunker://` is minted here and pasted into
-the client; `nostrconnect://` is minted by the client and pasted in here. Both
-end in a one-shot secret that the next matching `connect` consumes, and a
-`nostrconnect://` secret is pinned to the client that produced it.
+Pairing works in both directions, and the two are not symmetric. `bunker://`
+is minted here and pasted into the client, which then sends a `connect` this
+signer answers. `nostrconnect://` is minted by the client and pasted in here,
+and there the signer speaks first: the client is already waiting for a message
+carrying its own secret back, so accepting the URI sends that ack unprompted.
+Either way the secret is one-shot, and a `nostrconnect://` secret is pinned to
+the client that produced it.
+
+A `nostrconnect://` URI names the relays the client listens on, which are its
+own and need not be the signer's. Accepting one adds them to the account, so
+they show up in the relay list and can be removed there.
 
 Permissions are stored per client, per method, and per event kind for
 `sign_event`. Approving notes does not approve direct messages. Matching is

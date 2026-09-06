@@ -221,6 +221,7 @@ fn a_pairing_secret_works_once() {
             secret: "s3cret".to_string(),
             direction: PairingDirection::Bunker,
             client_public_key: None,
+            client_name: None,
             expires_at: Timestamp::now() + 300u64,
         })
         .expect("pairing inserts");
@@ -248,6 +249,7 @@ fn an_expired_pairing_is_not_usable() {
             secret: "stale".to_string(),
             direction: PairingDirection::NostrConnect,
             client_public_key: None,
+            client_name: None,
             expires_at: Timestamp::from_secs(1),
         })
         .expect("pairing inserts");

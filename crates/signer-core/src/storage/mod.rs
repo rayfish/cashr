@@ -104,15 +104,20 @@ fn method_from_sql(value: &str) -> Result<NostrConnectMethod> {
 mod tests {
     use super::*;
 
+    fn user_version(storage: &Storage) -> usize {
+        storage
+            .conn()
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("user_version readable")
+    }
+
     #[test]
     fn migrations_are_idempotent() {
         let storage = Storage::in_memory().expect("in-memory database opens");
-        let version: usize = storage
-            .conn()
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .expect("user_version readable");
-        assert_eq!(version, 1);
+        let version = user_version(&storage);
+        assert!(version > 0, "a fresh database runs its migrations");
 
         migrations::apply(&storage.conn()).expect("re-applying is a no-op");
+        assert_eq!(user_version(&storage), version);
     }
 }

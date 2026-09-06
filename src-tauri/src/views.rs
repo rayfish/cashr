@@ -144,6 +144,16 @@ pub struct PromptView {
     pub requested_at: u64,
 }
 
+/// The result of accepting a `nostrconnect://` URI.
+#[derive(Debug, Serialize)]
+pub struct PairingView {
+    pub client_public_key: String,
+    pub client_name: Option<String>,
+    /// Relays the client named that the account was not already using. The
+    /// window reports them, because the account is now listening there.
+    pub added_relays: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct StatusView {
     pub unlocked: bool,

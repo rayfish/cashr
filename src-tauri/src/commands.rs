@@ -3,20 +3,19 @@
 use std::time::Duration;
 
 use macos_native::notifications::RequestId;
-use nostr::nips::nip46::NostrConnectUri;
 use nostr::types::RelayUrl;
 use signer_core::account::AccountId;
 use signer_core::approval::ApprovalDecision;
 use signer_core::client::ClientId;
 use signer_core::kinds;
-use signer_core::pairing::{accept_client_uri, mint_bunker_uri};
+use signer_core::pairing::{accept_client_uri, mint_bunker_uri, parse_client_uri};
 use signer_core::policy::Decision;
 use tauri::{AppHandle, Runtime, State};
 
 use crate::state::AppState;
 use crate::views::{
-    method_from_str, scope_from_parts, AccountView, ActivityView, ClientView, PromptView,
-    RelayView, RuleView, StatusView,
+    method_from_str, scope_from_parts, AccountView, ActivityView, ClientView, PairingView,
+    PromptView, RelayView, RuleView, StatusView,
 };
 use crate::window;
 
@@ -130,15 +129,61 @@ pub fn pair_bunker(state: State<'_, AppState>, account: i64) -> CommandResult<St
 
 /// Accept a `nostrconnect://` URI a client produced.
 #[tauri::command]
-pub fn pair_client(state: State<'_, AppState>, account: i64, uri: String) -> CommandResult<String> {
-    let account = state
-        .storage
-        .account(AccountId::new(account))
-        .map_err(fail)?;
-    let parsed = NostrConnectUri::parse(&uri).map_err(fail)?;
+pub async fn pair_client(
+    state: State<'_, AppState>,
+    account: i64,
+    uri: String,
+) -> CommandResult<PairingView> {
+    let id = AccountId::new(account);
+
+    // Answering means signing, so a locked signer cannot finish this. Checked
+    // before anything is written, so a refusal leaves no half-made pairing.
+    if !state.session.vault().holds(id) {
+        return Err("unlock the signer before pairing".to_string());
+    }
+
+    let account = state.storage.account(id).map_err(fail)?;
+    let parsed = parse_client_uri(&uri).map_err(fail)?;
     let pairing =
         accept_client_uri(&state.storage, &account, &parsed, PAIRING_TTL).map_err(fail)?;
-    Ok(pairing.client_public_key.to_hex())
+
+    // The client is listening only on the relays it named, so that is where
+    // the signer has to answer. Adding them to the account is what makes the
+    // listening loop pick them up, and leaves them visible and removable
+    // rather than hidden in a pairing row.
+    let added: Vec<RelayUrl> = pairing
+        .relays
+        .iter()
+        .filter(|relay| !account.relays.contains(relay))
+        .cloned()
+        .collect();
+
+    if !added.is_empty() {
+        let mut relays = account.relays.clone();
+        relays.extend(added.iter().cloned());
+        state.set_relays(id, &relays).await.map_err(fail)?;
+    }
+
+    // This direction has the signer speak first: the client is waiting to be
+    // answered, not to be asked, so nothing happens until the ack goes out.
+    let ack = state
+        .session
+        .accept_pairing(&account, &pairing.client_public_key, &pairing.secret)
+        .await
+        .map_err(fail)?;
+    state
+        .runner
+        .transport()
+        .publish(id, ack, pairing.relays.clone())
+        .await
+        .map_err(fail)?;
+
+    let name = pairing.metadata.name;
+    Ok(PairingView {
+        client_public_key: pairing.client_public_key.to_hex(),
+        client_name: (!name.is_empty()).then_some(name),
+        added_relays: added.iter().map(|relay| relay.to_string()).collect(),
+    })
 }
 
 #[tauri::command]

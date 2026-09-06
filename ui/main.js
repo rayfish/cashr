@@ -64,6 +64,10 @@ function el(tag, className, text) {
   return node;
 }
 
+function plural(count, word) {
+  return count === 1 ? word : `${word}s`;
+}
+
 function shorten(value) {
   return value.length > 20 ? `${value.slice(0, 12)}…${value.slice(-8)}` : value;
 }
@@ -580,7 +584,7 @@ function wire() {
   };
 
   $("pair-bunker").onclick = async (event) => {
-    if (state.account === null) return;
+    if (state.account === null) return toast("Add an account first.");
     const uri = await call("pair_bunker", { account: state.account });
     const output = $("pair-output");
     output.textContent = uri;
@@ -594,15 +598,28 @@ function wire() {
     if (!form.hidden) $("pair-uri").focus();
   };
 
-  $("pair-client").onclick = async () => {
+  const pair = async () => {
     const uri = $("pair-uri").value.trim();
-    if (state.account === null || !uri) return;
-    await call("pair_client", { account: state.account, uri });
+    if (state.account === null) return toast("Add an account first.");
+    if (!uri) return toast("Paste the nostrconnect:// URI first.");
+
+    const paired = await call("pair_client", { account: state.account, uri });
     $("pair-uri").value = "";
     $("pair-form").hidden = true;
+
+    const who = paired.client_name || shorten(paired.client_public_key);
+    const count = paired.added_relays.length;
+    const relays =
+      count === 0 ? "" : ` Listening on ${count} more ${plural(count, "relay")}.`;
     const output = $("pair-output");
-    output.textContent = "Waiting for the client to connect.";
+    output.textContent = `Paired with ${who}.${relays}`;
     output.hidden = false;
+    await refreshAll();
+  };
+
+  $("pair-client").onclick = pair;
+  $("pair-uri").onkeydown = (event) => {
+    if (event.key === "Enter") pair();
   };
 
   $("rule-client").onchange = async (event) => {
