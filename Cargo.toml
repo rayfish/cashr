@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/relay-transport", "crates/signer-core"]
+members = ["crates/macos-native", "crates/relay-transport", "crates/signer-core"]
 
 [workspace.package]
 edition = "2021"
