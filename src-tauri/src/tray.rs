@@ -17,7 +17,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> Result<TrayIcon<R>> {
     let menu = Menu::with_items(
         app,
         &[
-            &MenuItem::with_id(app, OPEN, "Open nostr-tray", true, None::<&str>)?,
+            &MenuItem::with_id(app, OPEN, "Open Byrgi", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, UNLOCK, "Unlock", true, None::<&str>)?,
             &MenuItem::with_id(app, LOCK, "Lock", true, None::<&str>)?,

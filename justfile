@@ -1,8 +1,8 @@
-# nostr-tray
+# Byrgi
 
 # The code signing identity builds are signed with. Override with
 # APPLE_SIGNING_IDENTITY to use a Developer ID instead.
-identity := env_var_or_default("APPLE_SIGNING_IDENTITY", "nostr-tray Local")
+identity := env_var_or_default("APPLE_SIGNING_IDENTITY", "Byrgi Local")
 
 # How long the self-signed certificate lasts.
 cert_days := "3650"
@@ -156,7 +156,7 @@ verify:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    app="src-tauri/target/release/bundle/macos/nostr-tray.app"
+    app="src-tauri/target/release/bundle/macos/Byrgi.app"
     if [[ ! -d "$app" ]]; then
         echo "No bundle at $app. Run: just build" >&2
         exit 1

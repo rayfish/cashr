@@ -1,4 +1,4 @@
-//! nostr-tray: a menu bar NIP-46 signer.
+//! Byrgi: a menu bar NIP-46 signer.
 
 #![forbid(unsafe_code)]
 

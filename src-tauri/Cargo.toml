@@ -1,14 +1,14 @@
 [workspace]
 
 [package]
-name = "nostr-tray"
+name = "byrgi"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.85"
 
 [lib]
-name = "nostr_tray_lib"
+name = "byrgi_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

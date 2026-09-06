@@ -306,6 +306,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
+name = "byrgi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "macos-native",
+ "nostr",
+ "relay-transport",
+ "serde",
+ "serde_json",
+ "signer-core",
+ "tauri",
+ "tauri-build",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2304,24 +2322,6 @@ dependencies = [
  "universal-time",
  "url",
  "zeroize",
-]
-
-[[package]]
-name = "nostr-tray"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "macos-native",
- "nostr",
- "relay-transport",
- "serde",
- "serde_json",
- "signer-core",
- "tauri",
- "tauri-build",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

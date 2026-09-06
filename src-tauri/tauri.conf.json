@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "nostr-tray",
+  "productName": "Byrgi",
   "version": "0.1.0",
-  "identifier": "dgrr.tray.nostr",
+  "identifier": "dgrr.tray.byrgi",
   "build": {
     "frontendDist": "../ui"
   },
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "nostr-tray",
+        "title": "Byrgi",
         "width": 400,
         "height": 560,
         "resizable": false,

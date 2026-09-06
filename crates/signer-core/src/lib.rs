@@ -1,4 +1,4 @@
-//! Core of the nostr-tray signer: accounts, NIP-46 sessions, permission
+//! Core of the Byrgi signer: accounts, NIP-46 sessions, permission
 //! policy and storage.
 //!
 //! Nothing here depends on Tauri or on macOS. The platform is reached through

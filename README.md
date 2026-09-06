@@ -1,8 +1,10 @@
-# nostr-tray
+# Byrgi
 
-A macOS menu bar NIP-46 signer. Keys live in the Keychain behind Touch ID,
-clients pair over relays, and every request is checked against a permission
-rule before anything is signed.
+A macOS menu bar NIP-46 signer. *Byrgi* is Icelandic for a shelter, an
+enclosed place: a bunker, which is what NIP-46 calls this.
+
+Keys live in the Keychain behind Touch ID, clients pair over relays, and every
+request is checked against a permission rule before anything is signed.
 
 ## Layout
 
@@ -51,14 +53,14 @@ pending requests, so it degrades rather than breaks.
 Because the certificate is self-signed, Gatekeeper on any other Mac will
 object to the download. Installing there means right-click, Open, or:
 
-    xattr -dr com.apple.quarantine /Applications/nostr-tray.app
+    xattr -dr com.apple.quarantine /Applications/Byrgi.app
 
 Distributing properly needs a Developer ID Application certificate from the
 Apple Developer Program plus notarization and stapling. Nothing in the project
 blocks that: set `APPLE_SIGNING_IDENTITY` to the Developer ID instead, and add
 the notarization credentials the Tauri CLI reads.
 
-The bundle identifier `dgrr.tray.nostr` is the Keychain service name and the
+The bundle identifier `dgrr.tray.byrgi` is the Keychain service name and the
 notification registration. Changing it orphans every stored key.
 
 ## How it works
