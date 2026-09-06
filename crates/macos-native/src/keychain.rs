@@ -112,6 +112,7 @@ mod platform {
     const NOT_AVAILABLE: i32 = -25291; // errSecNotAvailable
     const AUTH_FAILED: i32 = -25293; // errSecAuthFailed
     const USER_CANCELED: i32 = -128; // errSecUserCanceled
+    const MISSING_ENTITLEMENT: i32 = -34018; // errSecMissingEntitlement
 
     /// `Ok(None)` when the account has nothing stored. A missing item is an
     /// ordinary answer here, not a failure, and saying so in the type is what
@@ -176,6 +177,15 @@ mod platform {
             // Mac that cannot authenticate at all, which is NOT_AVAILABLE.
             AUTH_FAILED => KeyStoreError::AuthFailed,
             NOT_AVAILABLE => KeyStoreError::AuthUnavailable,
+            // An item guarded by Touch ID sits in the data protection
+            // keychain, which macOS only opens to an app signed with a
+            // keychain access group. The bundle carries one; a binary run
+            // straight from cargo does not.
+            MISSING_ENTITLEMENT => KeyStoreError::Backend(
+                "this build is not signed with the keychain entitlement, \
+                 so macOS will not store keys. Run a bundle from `just build`."
+                    .to_string(),
+            ),
             code => KeyStoreError::Backend(match error.message() {
                 Some(message) => format!("keychain error {code}: {message}"),
                 None => format!("keychain error {code}"),

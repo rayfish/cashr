@@ -41,8 +41,9 @@ _needs-tauri:
 
 # Run the app from source
 dev: _needs-tauri
-    # Notification buttons need a signed bundle, so this shows the window and
-    # the tray but not the Approve/Reject buttons.
+    # The Keychain and notification buttons both need a signed bundle, so this
+    # shows the window and the tray, but storing a key fails and approvals
+    # arrive without their buttons.
     cd src-tauri && cargo tauri dev
 
 # Generate the icon set from icons/icon.png

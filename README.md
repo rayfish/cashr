@@ -33,9 +33,9 @@ appear there:
     just release      # build, sign, and report what it is signed with
     just dev          # run from source
 
-The bundle lands in `src-tauri/target/release/bundle`. Notification buttons
-only work from a signed, bundled app, so `just dev` shows the window and the
-tray but not the Approve/Reject buttons.
+The bundle lands in `src-tauri/target/release/bundle`. Notification buttons and
+the Keychain only work from a signed, bundled app, so `just dev` shows the
+window and the tray but cannot store a key or post an Approve/Reject button.
 
 ## Signing
 
@@ -46,7 +46,14 @@ a fresh key every time looks like a different app to macOS and is refused
 access to the keys it stored last time. A stable identity is what stops your
 keys apparently vanishing after every rebuild.
 
-`UNUserNotificationCenter` is the other reason. Unsigned bundles commonly get
+An entitlement is the other half of it. A key guarded by Touch ID lives in the
+data protection keychain, and macOS only lets an app in there if its signature
+carries a keychain access group. `src-tauri/Entitlements.plist` declares one,
+named after the bundle identifier; without it every write comes back
+`errSecMissingEntitlement`, which is why keys cannot be stored from a binary
+run straight out of cargo.
+
+`UNUserNotificationCenter` is the third reason. Unsigned bundles commonly get
 "Notifications are not allowed for this application" and post nothing, which
 costs the Approve/Reject buttons. The tray badge and the window still list
 pending requests, so it degrades rather than breaks.
@@ -61,8 +68,9 @@ Apple Developer Program plus notarization and stapling. Nothing in the project
 blocks that: set `APPLE_SIGNING_IDENTITY` to the Developer ID instead, and add
 the notarization credentials the Tauri CLI reads.
 
-The bundle identifier `dgrr.tray.byrgi` is the Keychain service name and the
-notification registration. Changing it orphans every stored key.
+The bundle identifier `dgrr.tray.byrgi` is the Keychain service name, the
+keychain access group and the notification registration. Changing it orphans
+every stored key.
 
 ## How it works
 
