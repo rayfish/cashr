@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
 members = ["crates/macos-native", "crates/relay-transport", "crates/signer-core"]
+# The Tauri app needs GTK/WebKit headers to build, which a Linux dev box here
+# does not have. Keeping it out of this workspace means cargo build, clippy and
+# test stay green on every machine; the app has its own workspace and is built
+# on the Mac.
+exclude = ["src-tauri"]
 
 [workspace.package]
 edition = "2021"

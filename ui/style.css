@@ -1,0 +1,239 @@
+:root {
+  --bg: #f5f5f7;
+  --panel: #ffffff;
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+  --line: #d2d2d7;
+  --accent: #0a66ff;
+  --danger: #d13b2e;
+  --ok: #1f9d55;
+  --radius: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e;
+    --panel: #2c2c2e;
+    --text: #f5f5f7;
+    --muted: #98989d;
+    --line: #3a3a3c;
+    --accent: #4c8dff;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
+    sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 78px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.title {
+  font-weight: 600;
+  flex: 1;
+}
+
+.pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--muted);
+}
+
+.pill.is-unlocked {
+  background: color-mix(in srgb, var(--ok) 20%, transparent);
+  color: var(--ok);
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 12px 0;
+}
+
+.tab {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font: inherit;
+}
+
+.tab.is-active {
+  background: var(--panel);
+  color: var(--text);
+}
+
+main {
+  padding: 12px;
+}
+
+.panel {
+  display: none;
+}
+
+.panel.is-active {
+  display: block;
+}
+
+h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 18px 0 6px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+input,
+select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
+button {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+button.ghost {
+  border: 0;
+  color: var(--accent);
+  background: none;
+}
+
+.prompts {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prompt .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex: none;
+}
+
+.dot.is-up {
+  background: var(--ok);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 6px 0 0;
+}
+
+.output {
+  display: block;
+  margin-top: 8px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  word-break: break-all;
+  color: var(--muted);
+}
+
+.error {
+  position: sticky;
+  bottom: 0;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--danger) 12%, var(--panel));
+  color: var(--danger);
+  border-top: 1px solid var(--line);
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-top: 10px;
+}

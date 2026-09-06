@@ -1,0 +1,28 @@
+[workspace]
+
+[package]
+name = "nostr-tray"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+[lib]
+name = "nostr_tray_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+macos-native = { path = "../crates/macos-native" }
+nostr = { version = "0.45", features = ["std", "os-rng", "nip04", "nip44", "nip46", "nip49"] }
+relay-transport = { path = "../crates/relay-transport" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+signer-core = { path = "../crates/signer-core" }
+tauri = { version = "2", features = ["tray-icon"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"

@@ -27,6 +27,10 @@ impl Runner {
         &self.session
     }
 
+    pub fn transport(&self) -> &Arc<dyn Transport> {
+        &self.transport
+    }
+
     /// Listen for this account's requests until the transport closes.
     pub async fn start(&self, account: Account) -> Result<JoinHandle<()>> {
         let mut incoming = self

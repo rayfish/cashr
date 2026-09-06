@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>nostr-tray</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="titlebar" data-tauri-drag-region>
+      <span class="title">nostr-tray</span>
+      <span id="lock-state" class="pill">locked</span>
+      <button id="lock-toggle" class="ghost">Unlock</button>
+    </header>
+
+    <section id="prompts" class="prompts" hidden></section>
+
+    <nav class="tabs">
+      <button class="tab is-active" data-tab="accounts">Accounts</button>
+      <button class="tab" data-tab="clients">Clients</button>
+      <button class="tab" data-tab="rules">Rules</button>
+      <button class="tab" data-tab="activity">Activity</button>
+    </nav>
+
+    <main>
+      <section id="tab-accounts" class="panel is-active">
+        <div id="account-list" class="list"></div>
+        <div class="row">
+          <input id="account-label" type="text" placeholder="Label" />
+          <button id="account-create">New key</button>
+        </div>
+        <details>
+          <summary>Import an existing key</summary>
+          <div class="row">
+            <input id="account-secret" type="password" placeholder="nsec1… or hex" />
+            <button id="account-import">Import</button>
+          </div>
+          <p class="hint">
+            The key goes straight into the Keychain. It is never written to the
+            database.
+          </p>
+        </details>
+
+        <h2>Relays</h2>
+        <div id="relay-list" class="list"></div>
+        <div class="row">
+          <input id="relay-url" type="text" placeholder="wss://relay.example" />
+          <button id="relay-add">Add</button>
+        </div>
+
+        <h2>Pair a client</h2>
+        <div class="row">
+          <button id="pair-bunker">Copy bunker:// URI</button>
+        </div>
+        <output id="pair-output" class="output"></output>
+        <div class="row">
+          <input id="pair-uri" type="text" placeholder="nostrconnect://…" />
+          <button id="pair-client">Accept</button>
+        </div>
+      </section>
+
+      <section id="tab-clients" class="panel">
+        <div id="client-list" class="list"></div>
+      </section>
+
+      <section id="tab-rules" class="panel">
+        <select id="rule-client"></select>
+        <div id="rule-list" class="list"></div>
+      </section>
+
+      <section id="tab-activity" class="panel">
+        <div id="activity-list" class="list"></div>
+        <button id="activity-more" class="ghost">Load more</button>
+      </section>
+    </main>
+
+    <footer id="error" class="error" hidden></footer>
+    <script src="main.js"></script>
+  </body>
+</html>

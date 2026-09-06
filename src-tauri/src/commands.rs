@@ -1,0 +1,245 @@
+//! The window's API. Each command is a thin call into the core.
+
+use std::time::Duration;
+
+use macos_native::notifications::RequestId;
+use nostr::nips::nip46::NostrConnectUri;
+use nostr::types::RelayUrl;
+use signer_core::account::AccountId;
+use signer_core::approval::ApprovalDecision;
+use signer_core::client::ClientId;
+use signer_core::pairing::{accept_client_uri, mint_bunker_uri};
+use signer_core::policy::Decision;
+use tauri::State;
+
+use crate::state::AppState;
+use crate::views::{
+    method_from_str, scope_from_parts, AccountView, ActivityView, ClientView, PromptView, RelayView,
+    RuleView, StatusView,
+};
+
+/// How long a minted pairing URI stays usable. Long enough to paste it
+/// somewhere, short enough that a stale one in a clipboard is worthless.
+const PAIRING_TTL: Duration = Duration::from_secs(300);
+
+/// Errors reaching the window are strings: it renders them, it does not match
+/// on them.
+type CommandResult<T> = Result<T, String>;
+
+fn fail<E: std::fmt::Display>(error: E) -> String {
+    error.to_string()
+}
+
+#[tauri::command]
+pub fn status(state: State<'_, AppState>) -> CommandResult<StatusView> {
+    let accounts = state.accounts().map_err(fail)?;
+    Ok(StatusView {
+        unlocked: state.session.vault().is_unlocked(),
+        accounts: accounts.iter().map(AccountView::from).collect(),
+        pending: state.approver.pending_count(),
+    })
+}
+
+#[tauri::command]
+pub async fn unlock(state: State<'_, AppState>) -> CommandResult<()> {
+    state.unlock().await.map_err(fail)
+}
+
+#[tauri::command]
+pub fn lock(state: State<'_, AppState>) -> CommandResult<()> {
+    state.lock();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn create_account(
+    state: State<'_, AppState>,
+    label: String,
+) -> CommandResult<AccountView> {
+    let account = state.create_account(label).await.map_err(fail)?;
+    Ok(AccountView::from(&account))
+}
+
+#[tauri::command]
+pub async fn import_account(
+    state: State<'_, AppState>,
+    label: String,
+    secret: String,
+) -> CommandResult<AccountView> {
+    let account = state.import_account(label, &secret).await.map_err(fail)?;
+    Ok(AccountView::from(&account))
+}
+
+#[tauri::command]
+pub async fn delete_account(state: State<'_, AppState>, account: i64) -> CommandResult<()> {
+    state
+        .delete_account(AccountId::new(account))
+        .await
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn set_default_account(state: State<'_, AppState>, account: i64) -> CommandResult<()> {
+    state
+        .storage
+        .set_default_account(AccountId::new(account))
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn set_relays(
+    state: State<'_, AppState>,
+    account: i64,
+    relays: Vec<String>,
+) -> CommandResult<()> {
+    let parsed: Result<Vec<RelayUrl>, _> = relays.iter().map(|u| RelayUrl::parse(u)).collect();
+    state
+        .storage
+        .set_account_relays(AccountId::new(account), &parsed.map_err(fail)?)
+        .map_err(fail)
+}
+
+/// Health comes from the pool rather than storage, so a relay that is
+/// configured but unreachable reads as down instead of simply absent. A dead
+/// relay and a broken signer look identical without this.
+#[tauri::command]
+pub async fn relay_health(
+    state: State<'_, AppState>,
+    account: i64,
+) -> CommandResult<Vec<RelayView>> {
+    let health = state
+        .runner
+        .transport()
+        .health(AccountId::new(account))
+        .await;
+    Ok(health.iter().map(RelayView::from).collect())
+}
+
+/// Mint a `bunker://` URI to paste into a client.
+#[tauri::command]
+pub fn pair_bunker(state: State<'_, AppState>, account: i64) -> CommandResult<String> {
+    let account = state
+        .storage
+        .account(AccountId::new(account))
+        .map_err(fail)?;
+    let uri = mint_bunker_uri(&state.storage, &account, PAIRING_TTL).map_err(fail)?;
+    Ok(uri.to_string())
+}
+
+/// Accept a `nostrconnect://` URI a client produced.
+#[tauri::command]
+pub fn pair_client(state: State<'_, AppState>, account: i64, uri: String) -> CommandResult<String> {
+    let account = state
+        .storage
+        .account(AccountId::new(account))
+        .map_err(fail)?;
+    let parsed = NostrConnectUri::parse(&uri).map_err(fail)?;
+    let pairing = accept_client_uri(&state.storage, &account, &parsed, PAIRING_TTL).map_err(fail)?;
+    Ok(pairing.client_public_key.to_hex())
+}
+
+#[tauri::command]
+pub fn clients(state: State<'_, AppState>, account: i64) -> CommandResult<Vec<ClientView>> {
+    let clients = state
+        .storage
+        .clients(AccountId::new(account))
+        .map_err(fail)?;
+    Ok(clients.iter().map(ClientView::from).collect())
+}
+
+#[tauri::command]
+pub fn revoke_client(state: State<'_, AppState>, client: i64) -> CommandResult<()> {
+    state
+        .storage
+        .revoke_client(ClientId::new(client))
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn rules(state: State<'_, AppState>, client: i64) -> CommandResult<Vec<RuleView>> {
+    let policy = state
+        .storage
+        .policy_set(ClientId::new(client))
+        .map_err(fail)?;
+    Ok(policy.rules().iter().map(RuleView::from).collect())
+}
+
+#[tauri::command]
+pub fn set_rule(
+    state: State<'_, AppState>,
+    client: i64,
+    method: String,
+    kind: Option<u16>,
+    allow: bool,
+) -> CommandResult<()> {
+    let method = method_from_str(&method).ok_or_else(|| format!("unknown method: {method}"))?;
+    let decision = if allow { Decision::Allow } else { Decision::Deny };
+    state
+        .storage
+        .set_rule(ClientId::new(client), scope_from_parts(method, kind), decision)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn clear_rule(
+    state: State<'_, AppState>,
+    client: i64,
+    method: String,
+    kind: Option<u16>,
+) -> CommandResult<()> {
+    let method = method_from_str(&method).ok_or_else(|| format!("unknown method: {method}"))?;
+    state
+        .storage
+        .clear_rule(ClientId::new(client), scope_from_parts(method, kind))
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn activity(
+    state: State<'_, AppState>,
+    account: i64,
+    limit: u32,
+    before: Option<i64>,
+) -> CommandResult<Vec<ActivityView>> {
+    let entries = state
+        .storage
+        .activity(AccountId::new(account), limit.min(200), before)
+        .map_err(fail)?;
+    Ok(entries.iter().map(ActivityView::from).collect())
+}
+
+#[tauri::command]
+pub fn prompts(state: State<'_, AppState>) -> CommandResult<Vec<PromptView>> {
+    Ok(state
+        .approver
+        .pending()
+        .into_iter()
+        .map(|pending| PromptView {
+            id: pending.id.get(),
+            account: pending.request.account.get(),
+            account_label: pending.request.account_label,
+            client: pending.request.client.get(),
+            client_name: pending.request.client_name,
+            client_public_key: pending.request.client_public_key.to_hex(),
+            detail: pending.request.detail,
+            method: pending.request.scope.method.to_string(),
+            kind: pending.request.scope.kind.map(|k| k.as_u16()),
+            requested_at: pending.request.requested_at.as_secs(),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn answer_prompt(
+    state: State<'_, AppState>,
+    id: u64,
+    allow: bool,
+    remember: bool,
+) -> CommandResult<bool> {
+    let decision = ApprovalDecision {
+        decision: if allow { Decision::Allow } else { Decision::Deny },
+        remember,
+    };
+    let id = RequestId::parse(&id.to_string()).ok_or_else(|| "bad request id".to_string())?;
+    Ok(state.approver.resolve(id, decision))
+}
