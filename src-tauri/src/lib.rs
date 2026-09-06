@@ -35,6 +35,17 @@ pub fn run() -> Result<()> {
 
             tray::build(&handle)?;
 
+            // Relays come up now, not at the first unlock. A request that
+            // arrives while the signer is locked is held and answered after
+            // the unlock, which only works if something heard it arrive.
+            let listen_handle = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = listen_handle.state::<AppState>();
+                if let Err(error) = state.start_listening().await {
+                    tracing::error!("could not start listening: {error}");
+                }
+            });
+
             // The badge is the fallback for a notification a Focus mode
             // swallowed: a request nobody saw still shows on the icon.
             let badge_handle = handle.clone();

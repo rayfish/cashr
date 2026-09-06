@@ -53,6 +53,18 @@ impl Runner {
         Ok(())
     }
 
+    /// Start an account unless it is already running.
+    ///
+    /// Used at launch and after an unlock. [`Runner::start`] would drop a
+    /// healthy connection and open a new subscription, which loses whatever
+    /// arrived in the gap; this leaves a working account alone.
+    pub async fn ensure(&self, account: Account) -> Result<()> {
+        if self.tasks.lock().await.contains_key(&account.id) {
+            return Ok(());
+        }
+        self.start(account).await
+    }
+
     /// Close an account's connections and stop its task.
     pub async fn stop(&self, account: AccountId) {
         if let Some(task) = self.tasks.lock().await.remove(&account) {

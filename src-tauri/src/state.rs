@@ -115,15 +115,30 @@ impl AppState {
         Ok(self.storage.accounts()?)
     }
 
-    /// Unlock every account, start their listening loops, and answer whatever
-    /// arrived while locked.
+    /// Connect every account's relays.
+    ///
+    /// Called at launch, before anything is unlocked. Listening does not need
+    /// the keys: a request that arrives while the signer is locked is held by
+    /// the session and answered after the unlock. Waiting for the unlock to
+    /// connect would make that impossible, because nothing would have been
+    /// there to hear the request.
+    pub async fn start_listening(&self) -> Result<()> {
+        for account in self.accounts()? {
+            self.runner.ensure(account).await?;
+        }
+        Ok(())
+    }
+
+    /// Unlock every account and answer whatever arrived while locked.
     pub async fn unlock(&self) -> Result<()> {
         let accounts = self.accounts()?;
         let ids: Vec<AccountId> = accounts.iter().map(|a| a.id).collect();
         self.session.unlock(&ids).await?;
 
+        // Ensure rather than start: an account already listening keeps its
+        // connections, and one added since launch gets its own.
         for account in &accounts {
-            self.runner.start(account.clone()).await?;
+            self.runner.ensure(account.clone()).await?;
         }
 
         self.runner.replay_deferred(&accounts).await?;
@@ -171,6 +186,13 @@ impl AppState {
         if let Err(error) = self.keystore.store(account.id, &keys).await {
             self.storage.delete_account(account.id)?;
             return Err(error.into());
+        }
+
+        // Listening starts now rather than at the next launch, so a client can
+        // be paired with the account as soon as it exists. A relay that will
+        // not come up is not a reason to report the account as failed.
+        if let Err(error) = self.runner.ensure(account.clone()).await {
+            tracing::warn!("could not start listening for the new account: {error}");
         }
 
         Ok(account)

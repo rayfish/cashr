@@ -14,7 +14,7 @@ use nostr::filter::Filter;
 use nostr::message::{ClientMessage, RelayMessage, SubscriptionId};
 use nostr::types::RelayUrl;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::Instant;
+use tokio::time::{timeout, Instant};
 use url::Url;
 use yawc::frame::{Frame, OpCode};
 use yawc::{Options, WebSocket};
@@ -25,6 +25,13 @@ use signer_core::transport::RelayHealth;
 /// caps low enough that a signer is never unreachable for long.
 const BACKOFF_START: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
+
+/// How long to wait for a relay to accept a connection.
+///
+/// Without it a relay that takes the socket and never finishes the handshake
+/// leaves the connection red with no error against it forever: the reconnect
+/// loop cannot come round, because the connect never returns.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How long a connection has to survive before it counts as healthy enough to
 /// reset the backoff. Without this, a relay that accepts and immediately hangs
@@ -80,9 +87,11 @@ impl Connection {
 
         // permessage-deflate is worth having here: relay traffic is repetitive
         // JSON, and the handshake simply skips it if the relay says no.
-        let socket = WebSocket::connect(url)
-            .with_options(Options::default().with_balanced_compression())
+        let connect =
+            WebSocket::connect(url).with_options(Options::default().with_balanced_compression());
+        let socket = timeout(CONNECT_TIMEOUT, connect)
             .await
+            .map_err(|_| "timed out connecting".to_string())?
             .map_err(|e| e.to_string())?;
 
         let (mut sink, mut stream) = socket.into_streaming().split();
