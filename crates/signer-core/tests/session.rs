@@ -10,17 +10,17 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use nostr::event::{Event, FinalizeEvent, Kind, UnsignedEvent};
-use nostr::key::{Keys, PublicKey, SecretKey};
+use nostr::key::{Keys, PublicKey};
 use nostr::nips::nip44::Nip44;
 use nostr::nips::nip46::{
     NostrConnectEventBuilder, NostrConnectMessage, NostrConnectMethod, NostrConnectRequest,
     NostrConnectUri, ResponseResult,
 };
 use nostr::types::{RelayUrl, Timestamp};
-use signer_core::account::Account;
+use signer_core::account::{Account, AccountId};
 use signer_core::approval::{ApprovalDecision, ApprovalRequest, Approver, NullNotifier};
 use signer_core::error::SignerError;
-use signer_core::keystore::{KeyHandle, KeyRole, KeyStore, KeyStoreError};
+use signer_core::keystore::{AccountKeys, KeyHandle, KeyRole, KeyStore, KeyStoreError};
 use signer_core::pairing::{accept_client_uri, mint_bunker_uri, parse_client_uri};
 use signer_core::policy::{Decision, Outcome, Scope};
 use signer_core::session::{Session, SessionConfig, SessionParts};
@@ -62,18 +62,23 @@ impl KeyStore for MemoryKeyStore {
 
     async fn store(
         &self,
-        handle: KeyHandle,
-        secret: SecretKey,
+        account: AccountId,
+        keys: &AccountKeys,
     ) -> std::result::Result<(), KeyStoreError> {
-        self.put(handle, Keys::new(secret));
+        for role in [KeyRole::Identity, KeyRole::Transport] {
+            self.put(
+                KeyHandle::new(account, role),
+                Keys::new(keys.role(role).clone()),
+            );
+        }
         Ok(())
     }
 
-    async fn delete(&self, handle: KeyHandle) -> std::result::Result<(), KeyStoreError> {
-        self.keys
-            .lock()
-            .expect("test lock is uncontended")
-            .remove(&handle.to_string());
+    async fn delete(&self, account: AccountId) -> std::result::Result<(), KeyStoreError> {
+        let mut keys = self.keys.lock().expect("test lock is uncontended");
+        for role in [KeyRole::Identity, KeyRole::Transport] {
+            keys.remove(&KeyHandle::new(account, role).to_string());
+        }
         Ok(())
     }
 }

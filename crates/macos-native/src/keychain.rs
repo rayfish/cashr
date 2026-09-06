@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use nostr::key::{Keys, SecretKey};
 use serde::{Deserialize, Serialize};
 use signer_core::account::AccountId;
-use signer_core::keystore::{KeyHandle, KeyRole, KeyStore, KeyStoreError};
+use signer_core::keystore::{AccountKeys, KeyHandle, KeyRole, KeyStore, KeyStoreError};
 
 /// Both of an account's secret keys, as stored in one Keychain item.
 ///
@@ -27,20 +27,13 @@ impl StoredKeys {
             KeyRole::Transport => &self.transport,
         }
     }
+}
 
-    fn with(mut self, role: KeyRole, secret: &SecretKey) -> Self {
-        let hex = secret.to_secret_hex();
-        match role {
-            KeyRole::Identity => self.identity = hex,
-            KeyRole::Transport => self.transport = hex,
-        }
-        self
-    }
-
-    fn empty() -> Self {
+impl From<&AccountKeys> for StoredKeys {
+    fn from(keys: &AccountKeys) -> Self {
         Self {
-            identity: String::new(),
-            transport: String::new(),
+            identity: keys.identity.to_secret_hex(),
+            transport: keys.transport.to_secret_hex(),
         }
     }
 }
@@ -66,7 +59,8 @@ impl KeychainKeyStore {
 #[async_trait]
 impl KeyStore for KeychainKeyStore {
     async fn load(&self, handle: KeyHandle) -> Result<Keys, KeyStoreError> {
-        let stored = platform::read(&self.service, &Self::item_name(handle.account))?;
+        let stored = platform::read(&self.service, &Self::item_name(handle.account))?
+            .ok_or(KeyStoreError::NotFound(handle))?;
         let hex = stored.role(handle.role);
         if hex.is_empty() {
             return Err(KeyStoreError::NotFound(handle));
@@ -76,18 +70,16 @@ impl KeyStore for KeychainKeyStore {
         Ok(Keys::new(secret))
     }
 
-    async fn store(&self, handle: KeyHandle, secret: SecretKey) -> Result<(), KeyStoreError> {
-        let name = Self::item_name(handle.account);
-        let existing = match platform::read(&self.service, &name) {
-            Ok(stored) => stored,
-            Err(KeyStoreError::NotFound(_)) => StoredKeys::empty(),
-            Err(other) => return Err(other),
-        };
-        platform::write(&self.service, &name, &existing.with(handle.role, &secret))
+    /// Both keys in one write. The item holds the pair, so writing one at a
+    /// time would mean reading the other back first, and reading an item
+    /// guarded by USER_PRESENCE asks for Touch ID: creating an account would
+    /// prompt for a key the app had just generated itself.
+    async fn store(&self, account: AccountId, keys: &AccountKeys) -> Result<(), KeyStoreError> {
+        platform::write(&self.service, &Self::item_name(account), &keys.into())
     }
 
-    async fn delete(&self, handle: KeyHandle) -> Result<(), KeyStoreError> {
-        platform::delete(&self.service, &Self::item_name(handle.account))
+    async fn delete(&self, account: AccountId) -> Result<(), KeyStoreError> {
+        platform::delete(&self.service, &Self::item_name(account))
     }
 
     async fn load_many(&self, handles: &[KeyHandle]) -> Result<Vec<Keys>, KeyStoreError> {
@@ -121,10 +113,18 @@ mod platform {
     const AUTH_FAILED: i32 = -25293; // errSecAuthFailed
     const USER_CANCELED: i32 = -128; // errSecUserCanceled
 
-    pub(super) fn read(service: &str, account: &str) -> Result<StoredKeys, KeyStoreError> {
+    /// `Ok(None)` when the account has nothing stored. A missing item is an
+    /// ordinary answer here, not a failure, and saying so in the type is what
+    /// keeps a caller from treating it as one.
+    pub(super) fn read(service: &str, account: &str) -> Result<Option<StoredKeys>, KeyStoreError> {
         let options = PasswordOptions::new_generic_password(service, account);
-        let bytes = generic_password(options).map_err(|e| translate(e, account))?;
+        let bytes = match generic_password(options) {
+            Ok(bytes) => bytes,
+            Err(e) if e.code() == NOT_FOUND => return Ok(None),
+            Err(e) => return Err(translate(e)),
+        };
         serde_json::from_slice(&bytes)
+            .map(Some)
             .map_err(|e| KeyStoreError::Backend(format!("stored item is not readable: {e}")))
     }
 
@@ -151,25 +151,26 @@ mod platform {
         match delete_generic_password(service, account) {
             Ok(()) => {}
             Err(e) if e.code() == NOT_FOUND => {}
-            Err(e) => return Err(translate(e, account)),
+            Err(e) => return Err(translate(e)),
         }
 
         let mut options = PasswordOptions::new_generic_password(service, account);
         options.set_access_control(access);
-        set_generic_password_options(&bytes, options).map_err(|e| translate(e, account))
+        set_generic_password_options(&bytes, options).map_err(translate)
     }
 
     pub(super) fn delete(service: &str, account: &str) -> Result<(), KeyStoreError> {
         match delete_generic_password(service, account) {
             Ok(()) => Ok(()),
             Err(e) if e.code() == NOT_FOUND => Ok(()),
-            Err(e) => Err(translate(e, account)),
+            Err(e) => Err(translate(e)),
         }
     }
 
-    fn translate(error: security_framework::base::Error, account: &str) -> KeyStoreError {
+    /// Every caller decides for itself what a missing item means, so
+    /// `NOT_FOUND` never reaches here.
+    fn translate(error: security_framework::base::Error) -> KeyStoreError {
         match error.code() {
-            NOT_FOUND => KeyStoreError::Backend(format!("no keychain item for {account}")),
             USER_CANCELED => KeyStoreError::Cancelled,
             // Touch ID refused, or the passcode was wrong. Distinct from a
             // Mac that cannot authenticate at all, which is NOT_AVAILABLE.
@@ -193,7 +194,10 @@ mod platform {
         KeyStoreError::Backend("the Keychain is only available on macOS".to_string())
     }
 
-    pub(super) fn read(_service: &str, _account: &str) -> Result<StoredKeys, KeyStoreError> {
+    pub(super) fn read(
+        _service: &str,
+        _account: &str,
+    ) -> Result<Option<StoredKeys>, KeyStoreError> {
         Err(unsupported())
     }
 

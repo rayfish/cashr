@@ -10,7 +10,7 @@ use nostr::types::RelayUrl;
 use relay_transport::RelayTransport;
 use signer_core::account::{Account, AccountId};
 use signer_core::approval::{Notifier, SignerEvent};
-use signer_core::keystore::{KeyHandle, KeyRole, KeyStore};
+use signer_core::keystore::{AccountKeys, KeyStore};
 use signer_core::runner::Runner;
 use signer_core::session::{Session, SessionConfig, SessionParts};
 use signer_core::storage::{NewAccount, Storage};
@@ -161,18 +161,16 @@ impl AppState {
         })?;
 
         // Keys go in only after the row exists, so a failed write leaves an
-        // account with no keys rather than keys with no account. If either
-        // write fails the row goes too, so a half-made account cannot sit
-        // there looking usable.
-        for (role, keys) in [
-            (KeyRole::Identity, &identity),
-            (KeyRole::Transport, &transport),
-        ] {
-            let handle = KeyHandle::new(account.id, role);
-            if let Err(error) = self.keystore.store(handle, keys.secret_key().clone()).await {
-                self.storage.delete_account(account.id)?;
-                return Err(error.into());
-            }
+        // account with no keys rather than keys with no account. If the write
+        // fails the row goes too, so a half-made account cannot sit there
+        // looking usable.
+        let keys = AccountKeys {
+            identity: identity.secret_key().clone(),
+            transport: transport.secret_key().clone(),
+        };
+        if let Err(error) = self.keystore.store(account.id, &keys).await {
+            self.storage.delete_account(account.id)?;
+            return Err(error.into());
         }
 
         Ok(account)
@@ -193,12 +191,7 @@ impl AppState {
     /// Remove an account, its keys and everything hanging off it.
     pub async fn delete_account(&self, id: AccountId) -> Result<()> {
         self.runner.stop(id).await;
-        self.keystore
-            .delete(KeyHandle::new(id, KeyRole::Identity))
-            .await?;
-        self.keystore
-            .delete(KeyHandle::new(id, KeyRole::Transport))
-            .await?;
+        self.keystore.delete(id).await?;
         self.storage.delete_account(id)?;
         Ok(())
     }

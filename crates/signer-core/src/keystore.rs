@@ -46,6 +46,26 @@ impl KeyRole {
     }
 }
 
+/// Both of an account's secret keys.
+///
+/// They are written together. A backend that keeps them in one item, which is
+/// what the Keychain one does, can then write an account without reading
+/// anything back, and reading back an item guarded by Touch ID would ask the
+/// user to prove presence in the middle of creating an account.
+pub struct AccountKeys {
+    pub identity: SecretKey,
+    pub transport: SecretKey,
+}
+
+impl AccountKeys {
+    pub fn role(&self, role: KeyRole) -> &SecretKey {
+        match role {
+            KeyRole::Identity => &self.identity,
+            KeyRole::Transport => &self.transport,
+        }
+    }
+}
+
 /// Names one stored key. Used as the Keychain item account attribute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyHandle {
@@ -70,9 +90,11 @@ pub trait KeyStore: Send + Sync + 'static {
     /// Read a key out of storage. On macOS this is what triggers Touch ID.
     async fn load(&self, handle: KeyHandle) -> Result<Keys, KeyStoreError>;
 
-    async fn store(&self, handle: KeyHandle, secret: SecretKey) -> Result<(), KeyStoreError>;
+    /// Write both of an account's keys.
+    async fn store(&self, account: AccountId, keys: &AccountKeys) -> Result<(), KeyStoreError>;
 
-    async fn delete(&self, handle: KeyHandle) -> Result<(), KeyStoreError>;
+    /// Forget everything stored for an account. Missing keys are not an error.
+    async fn delete(&self, account: AccountId) -> Result<(), KeyStoreError>;
 
     /// Public key without unlocking, when the backend can manage it.
     async fn public_key(&self, handle: KeyHandle) -> Result<PublicKey, KeyStoreError> {

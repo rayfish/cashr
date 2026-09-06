@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use nostr::event::{Event, FinalizeEvent};
-use nostr::key::{Keys, SecretKey};
+use nostr::key::Keys;
 use nostr::nips::nip44::Nip44;
 use nostr::nips::nip46::{
     NostrConnectEventBuilder, NostrConnectMessage, NostrConnectRequest, NostrConnectUri,
@@ -14,7 +14,7 @@ use nostr::nips::nip46::{
 use nostr::types::RelayUrl;
 use signer_core::account::Account;
 use signer_core::approval::{ApprovalDecision, ApprovalRequest, Approver, NullNotifier};
-use signer_core::keystore::{KeyHandle, KeyRole, KeyStore, KeyStoreError};
+use signer_core::keystore::{AccountKeys, KeyHandle, KeyRole, KeyStore, KeyStoreError};
 use signer_core::pairing::mint_bunker_uri;
 use signer_core::runner::Runner;
 use signer_core::session::{Session, SessionConfig, SessionParts};
@@ -39,17 +39,20 @@ impl KeyStore for MemoryKeyStore {
 
     async fn store(
         &self,
-        handle: KeyHandle,
-        secret: SecretKey,
+        account: AccountId,
+        keys: &AccountKeys,
     ) -> std::result::Result<(), KeyStoreError> {
-        self.0
-            .lock()
-            .expect("test lock is uncontended")
-            .insert(handle.to_string(), Keys::new(secret));
+        let mut stored = self.0.lock().expect("test lock is uncontended");
+        for role in [KeyRole::Identity, KeyRole::Transport] {
+            stored.insert(
+                KeyHandle::new(account, role).to_string(),
+                Keys::new(keys.role(role).clone()),
+            );
+        }
         Ok(())
     }
 
-    async fn delete(&self, _handle: KeyHandle) -> std::result::Result<(), KeyStoreError> {
+    async fn delete(&self, _account: AccountId) -> std::result::Result<(), KeyStoreError> {
         Ok(())
     }
 }
