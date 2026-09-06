@@ -3,6 +3,7 @@
 //! Deliberately separate from the core types: the UI gets strings and numbers
 //! it can render, and no shape here can carry key material.
 
+use nostr::nips::nip19::ToBech32;
 use nostr::nips::nip46::NostrConnectMethod;
 use serde::Serialize;
 use signer_core::account::Account;

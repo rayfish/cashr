@@ -12,16 +12,13 @@ mod window;
 use anyhow::Result;
 use signer_core::storage::Storage;
 use tauri::{Manager, WindowEvent};
+use tracing::Level;
+use tracing_subscriber::fmt;
 
 use crate::state::AppState;
 
 pub fn run() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "nostr_tray_lib=info,signer_core=info".into()),
-        )
-        .init();
+    fmt().with_max_level(Level::DEBUG).init();
 
     tauri::Builder::default()
         .setup(|app| {

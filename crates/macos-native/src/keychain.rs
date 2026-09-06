@@ -113,11 +113,13 @@ mod platform {
 
     use super::StoredKeys;
 
-    /// errSecItemNotFound. Anything else is a real failure worth surfacing.
-    const NOT_FOUND: i32 = -25300;
-    /// errSecUserCanceled, and the LocalAuthentication equivalent.
-    const USER_CANCELED: i32 = -128;
-    const AUTH_FAILED: i32 = -25293;
+    // OSStatus values from Security/SecBase.h. security-framework-sys exports
+    // some of these but not all, so they are spelled out together rather than
+    // half imported and half written down.
+    const NOT_FOUND: i32 = -25300; // errSecItemNotFound
+    const NOT_AVAILABLE: i32 = -25291; // errSecNotAvailable
+    const AUTH_FAILED: i32 = -25293; // errSecAuthFailed
+    const USER_CANCELED: i32 = -128; // errSecUserCanceled
 
     pub(super) fn read(service: &str, account: &str) -> Result<StoredKeys, KeyStoreError> {
         let options = PasswordOptions::new_generic_password(service, account);
@@ -169,8 +171,14 @@ mod platform {
         match error.code() {
             NOT_FOUND => KeyStoreError::Backend(format!("no keychain item for {account}")),
             USER_CANCELED => KeyStoreError::Cancelled,
-            AUTH_FAILED => KeyStoreError::AuthUnavailable,
-            code => KeyStoreError::Backend(format!("keychain error {code}")),
+            // Touch ID refused, or the passcode was wrong. Distinct from a
+            // Mac that cannot authenticate at all, which is NOT_AVAILABLE.
+            AUTH_FAILED => KeyStoreError::AuthFailed,
+            NOT_AVAILABLE => KeyStoreError::AuthUnavailable,
+            code => KeyStoreError::Backend(match error.message() {
+                Some(message) => format!("keychain error {code}: {message}"),
+                None => format!("keychain error {code}"),
+            }),
         }
     }
 }

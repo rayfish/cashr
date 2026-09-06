@@ -17,6 +17,9 @@ pub enum KeyStoreError {
     #[error("the user cancelled authentication")]
     Cancelled,
 
+    #[error("authentication failed")]
+    AuthFailed,
+
     #[error("authentication is not available on this device")]
     AuthUnavailable,
 
