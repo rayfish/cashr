@@ -1,12 +1,18 @@
 //! The menu bar icon and its menu.
 
 use anyhow::Result;
+use tauri::image::Image;
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::state::AppState;
 use crate::window;
+
+/// The menu bar mark, as a template image: macOS reads only its alpha and
+/// paints it to match the bar, so it follows dark mode and a tinted desktop
+/// without a second asset. The source is `icons/tray.svg`.
+const ICON: &[u8] = include_bytes!("../icons/tray.png");
 
 const OPEN: &str = "open";
 const UNLOCK: &str = "unlock";
@@ -31,9 +37,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> Result<TrayIcon<R>> {
         // The menu belongs to the right button. The left button opens the
         // window under the icon, which is what a menu bar utility does.
         .show_menu_on_left_click(false)
-        .icon(app.default_window_icon().cloned().ok_or_else(|| {
-            anyhow::anyhow!("the bundle has no icon; tauri.conf.json bundle.icon is wrong")
-        })?)
+        .icon(Image::from_bytes(ICON)?)
         .icon_as_template(true)
         .on_menu_event(on_menu_event)
         .on_tray_icon_event(on_tray_event)

@@ -12,6 +12,7 @@ request is checked against a permission rule before anything is signed.
     crates/relay-transport relay websockets behind signer-core's Transport trait
     crates/macos-native    Keychain and notification prompts
     src-tauri              the app: tray, window, commands
+    src-tauri/icons        tray.svg is the menu bar mark, icon.svg the app's
     ui                     the window's frontend, plain HTML and JS
 
 `signer-core` reaches the platform through three traits (`KeyStore`,

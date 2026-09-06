@@ -1,0 +1,10 @@
+<!-- Menu bar template image. Only the alpha channel reaches the screen, so the
+     mark is a plain black stroke and macOS tints it for the current menu bar.
+     Drawn on an 18pt grid at 2x, which is the height the status item forces. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="36" height="36">
+  <g fill="none" stroke="#000" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7.4 27.5V18a10.6 10.6 0 0 1 21.2 0v9.5" />
+    <path d="M4.5 28.6h27" />
+    <path d="M13.6 17.8h8.8" />
+  </g>
+</svg>
