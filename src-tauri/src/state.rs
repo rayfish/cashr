@@ -157,18 +157,18 @@ impl AppState {
         })?;
 
         // Keys go in only after the row exists, so a failed write leaves an
-        // account with no keys rather than keys with no account.
-        let store = |role, keys: &Keys| {
-            self.keystore
-                .store(KeyHandle::new(account.id, role), keys.secret_key().clone())
-        };
-        if let Err(error) = store(KeyRole::Identity, &identity).await {
-            self.storage.delete_account(account.id)?;
-            return Err(error.into());
-        }
-        if let Err(error) = store(KeyRole::Transport, &transport).await {
-            self.storage.delete_account(account.id)?;
-            return Err(error.into());
+        // account with no keys rather than keys with no account. If either
+        // write fails the row goes too, so a half-made account cannot sit
+        // there looking usable.
+        for (role, keys) in [
+            (KeyRole::Identity, &identity),
+            (KeyRole::Transport, &transport),
+        ] {
+            let handle = KeyHandle::new(account.id, role);
+            if let Err(error) = self.keystore.store(handle, keys.secret_key().clone()).await {
+                self.storage.delete_account(account.id)?;
+                return Err(error.into());
+            }
         }
 
         Ok(account)
