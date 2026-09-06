@@ -25,6 +25,7 @@ signed be tested without a Mac and without a relay.
 `src-tauri` is a separate workspace and needs a Mac. The macOS recipes only
 appear there:
 
+    just tools        # once, installs the Tauri CLI (a separate cargo binary)
     just cert         # once per machine, creates the signing identity
     just release      # build, sign, and report what it is signed with
     just dev          # run from source

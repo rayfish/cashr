@@ -25,14 +25,28 @@ lint:
 test:
     cargo test {{ core_crates }}
 
+# Install the Tauri CLI, which is a separate cargo binary
+tools:
+    cargo install tauri-cli --locked --version "^2.0"
+
+# Fail with something actionable when the Tauri CLI is missing
+[private]
+_needs-tauri:
+    #!/usr/bin/env bash
+    if ! cargo tauri --version >/dev/null 2>&1; then
+        echo "The Tauri CLI is not installed. Run: just tools" >&2
+        echo "It builds from source, so expect a few minutes." >&2
+        exit 1
+    fi
+
 # Run the app from source
-dev:
+dev: _needs-tauri
     # Notification buttons need a signed bundle, so this shows the window and
     # the tray but not the Approve/Reject buttons.
     cd src-tauri && cargo tauri dev
 
 # Generate the icon set from icons/icon.png
-icon:
+icon: _needs-tauri
     cd src-tauri && cargo tauri icon icons/icon.png
 
 # Create the self-signed code signing identity, once per Mac
@@ -115,7 +129,7 @@ cert:
 
 # Build and sign the app bundle
 [macos]
-build:
+build: _needs-tauri
     #!/usr/bin/env bash
     set -euo pipefail
 
