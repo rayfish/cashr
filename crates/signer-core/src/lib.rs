@@ -13,6 +13,7 @@ pub mod error;
 pub mod keystore;
 pub mod pairing;
 pub mod policy;
+pub mod runner;
 pub mod session;
 pub mod storage;
 pub mod transport;
