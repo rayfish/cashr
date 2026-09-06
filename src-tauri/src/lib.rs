@@ -46,8 +46,10 @@ pub fn run() -> Result<()> {
                 }
             });
 
-            // The badge is the fallback for a notification a Focus mode
-            // swallowed: a request nobody saw still shows on the icon.
+            // What a waiting request looks like when the notification does not
+            // arrive. A notification can be refused permission or swallowed by
+            // a Focus mode, and a prompt nobody sees is a prompt that expires,
+            // so the icon badges and the window comes up by itself.
             let badge_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 let mut shown = usize::MAX;
@@ -55,6 +57,9 @@ pub fn run() -> Result<()> {
                     let pending = badge_handle.state::<AppState>().approver.pending_count();
                     if pending != shown {
                         tray::set_badge(&badge_handle, pending);
+                        if pending > shown {
+                            window::show(&badge_handle);
+                        }
                         shown = pending;
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;

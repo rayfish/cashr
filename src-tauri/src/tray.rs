@@ -90,11 +90,14 @@ pub fn set_badge<R: Runtime>(app: &AppHandle<R>, pending: usize) {
     let Some(tray) = app.tray_by_id("main") else {
         return;
     };
+    // An empty string rather than `None`: clearing a menu bar title by passing
+    // nothing does not reliably take, and a badge that will not go away says
+    // there is a decision waiting when there is not.
     let title = match pending {
-        0 => None,
-        n => Some(format!("{n}")),
+        0 => String::new(),
+        n => format!("{n}"),
     };
-    if let Err(error) = tray.set_title(title) {
+    if let Err(error) = tray.set_title(Some(title)) {
         tracing::debug!("could not set the tray badge: {error}");
     }
 }
