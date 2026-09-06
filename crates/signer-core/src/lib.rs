@@ -6,6 +6,8 @@
 //! [`transport::Transport`] traits, which is what makes this crate testable
 //! away from a Mac.
 
+#![forbid(unsafe_code)]
+
 pub mod account;
 pub mod approval;
 pub mod client;

@@ -1,5 +1,7 @@
 //! nostr-tray: a menu bar NIP-46 signer.
 
+#![forbid(unsafe_code)]
+
 mod commands;
 mod paths;
 mod state;

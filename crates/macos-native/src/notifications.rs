@@ -159,10 +159,11 @@ pub const ACTION_REJECT: &str = "REJECT";
 mod platform {
     use std::sync::OnceLock;
 
+    use block2::{DynBlock, RcBlock};
     use objc2::rc::Retained;
-    use objc2::runtime::ProtocolObject;
-    use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass};
-    use objc2_foundation::{NSObject, NSObjectProtocol, NSSet, NSString};
+    use objc2::runtime::{Bool, ProtocolObject};
+    use objc2::{define_class, msg_send, AllocAnyThread};
+    use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol, NSSet, NSString};
     use objc2_user_notifications::{
         UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationAction,
         UNNotificationActionOptions, UNNotificationCategory, UNNotificationCategoryOptions,
@@ -190,7 +191,7 @@ mod platform {
                 &self,
                 _center: &UNUserNotificationCenter,
                 response: &UNNotificationResponse,
-                completion: &block2::DynBlock<dyn Fn()>,
+                completion: &DynBlock<dyn Fn()>,
             ) {
                 handle_response(response);
                 completion.call(());
@@ -203,8 +204,8 @@ mod platform {
             return;
         };
 
-        let action = unsafe { response.actionIdentifier() }.to_string();
-        let identifier = unsafe { response.notification().request().identifier() }.to_string();
+        let action = response.actionIdentifier().to_string();
+        let identifier = response.notification().request().identifier().to_string();
         let Some(id) = RequestId::parse(&identifier) else {
             return;
         };
@@ -231,44 +232,43 @@ mod platform {
     pub fn install(approver: Arc<NotificationApprover>) {
         let _ = APPROVER.set(approver);
 
-        unsafe {
-            let center = UNUserNotificationCenter::currentNotificationCenter();
+        let center = UNUserNotificationCenter::currentNotificationCenter();
 
-            let approve = UNNotificationAction::actionWithIdentifier_title_options(
-                &NSString::from_str(ACTION_APPROVE),
-                &NSString::from_str("Approve"),
-                UNNotificationActionOptions::empty(),
-            );
-            let reject = UNNotificationAction::actionWithIdentifier_title_options(
-                &NSString::from_str(ACTION_REJECT),
-                &NSString::from_str("Reject"),
-                UNNotificationActionOptions::Destructive,
-            );
+        let approve = UNNotificationAction::actionWithIdentifier_title_options(
+            &NSString::from_str(ACTION_APPROVE),
+            &NSString::from_str("Approve"),
+            UNNotificationActionOptions::empty(),
+        );
+        let reject = UNNotificationAction::actionWithIdentifier_title_options(
+            &NSString::from_str(ACTION_REJECT),
+            &NSString::from_str("Reject"),
+            UNNotificationActionOptions::Destructive,
+        );
 
-            let actions = objc2_foundation::NSArray::from_retained_slice(&[approve, reject]);
-            let category =
-                UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
-                    &NSString::from_str(CATEGORY),
-                    &actions,
-                    &objc2_foundation::NSArray::new(),
-                    UNNotificationCategoryOptions::empty(),
+        let actions = NSArray::from_retained_slice(&[approve, reject]);
+        let category =
+            UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+                &NSString::from_str(CATEGORY),
+                &actions,
+                &NSArray::new(),
+                UNNotificationCategoryOptions::empty(),
+            );
+        center.setNotificationCategories(&NSSet::from_retained_slice(&[category]));
+
+        // The delegate is kept in a `OnceLock` for the life of the process,
+        // which is what `setDelegate` needs: the center does not retain it.
+        let delegate = DELEGATE.get_or_init(new_response_handler);
+        center.setDelegate(Some(ProtocolObject::from_ref(&**delegate)));
+
+        let options = UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound;
+        let handler = RcBlock::new(|granted: Bool, _error: *mut NSError| {
+            if !granted.as_bool() {
+                tracing::warn!(
+                    "notification permission refused; prompts will only appear in the window"
                 );
-            let categories = NSSet::from_retained_slice(&[category]);
-            center.setNotificationCategories(&categories);
-
-            let delegate = DELEGATE.get_or_init(|| ResponseHandler::alloc().set_ivars(()).into());
-            center.setDelegate(Some(ProtocolObject::from_ref(&**delegate)));
-
-            let options = UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound;
-            let handler = block2::RcBlock::new(
-                |granted: objc2::runtime::Bool, _error: *mut objc2_foundation::NSError| {
-                    if !granted.as_bool() {
-                        tracing::warn!("notification permission refused; prompts will only appear in the window");
-                    }
-                },
-            );
-            center.requestAuthorizationWithOptions_completionHandler(options, &handler);
-        }
+            }
+        });
+        center.requestAuthorizationWithOptions_completionHandler(options, &handler);
     }
 
     pub(super) fn post(id: RequestId, request: &ApprovalRequest) -> Result<(), String> {
@@ -281,27 +281,25 @@ mod platform {
             .clone()
             .unwrap_or_else(|| short_key(&request.client_public_key.to_hex()));
 
-        unsafe {
-            let content = UNMutableNotificationContent::new();
-            content.setTitle(&NSString::from_str(&format!(
-                "{name} wants to {}",
-                request.detail
-            )));
-            content.setBody(&NSString::from_str(&format!(
-                "Account: {}",
-                request.account_label
-            )));
-            content.setCategoryIdentifier(&NSString::from_str(CATEGORY));
+        let content = UNMutableNotificationContent::new();
+        content.setTitle(&NSString::from_str(&format!(
+            "{name} wants to {}",
+            request.detail
+        )));
+        content.setBody(&NSString::from_str(&format!(
+            "Account: {}",
+            request.account_label
+        )));
+        content.setCategoryIdentifier(&NSString::from_str(CATEGORY));
 
-            let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
-                &NSString::from_str(&id.to_string()),
-                &content,
-                None,
-            );
+        let notification = UNNotificationRequest::requestWithIdentifier_content_trigger(
+            &NSString::from_str(&id.to_string()),
+            &content,
+            None,
+        );
 
-            let center = UNUserNotificationCenter::currentNotificationCenter();
-            center.addNotificationRequest_withCompletionHandler(&request, None);
-        }
+        UNUserNotificationCenter::currentNotificationCenter()
+            .addNotificationRequest_withCompletionHandler(&notification, None);
 
         Ok(())
     }
@@ -310,15 +308,23 @@ mod platform {
     /// Notification Center does not keep offering a decision that goes
     /// nowhere.
     pub(super) fn withdraw(id: RequestId) {
-        unsafe {
-            let center = UNUserNotificationCenter::currentNotificationCenter();
-            let identifiers =
-                objc2_foundation::NSArray::from_retained_slice(&[NSString::from_str(
-                    &id.to_string(),
-                )]);
-            center.removeDeliveredNotificationsWithIdentifiers(&identifiers);
-            center.removePendingNotificationRequestsWithIdentifiers(&identifiers);
-        }
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        let identifiers = NSArray::from_retained_slice(&[NSString::from_str(&id.to_string())]);
+        center.removeDeliveredNotificationsWithIdentifiers(&identifiers);
+        center.removePendingNotificationRequestsWithIdentifiers(&identifiers);
+    }
+
+    /// Allocate and initialise the delegate.
+    ///
+    /// This is the only unsafe call outside the class definition itself.
+    /// Objective-C has no safe way to send `init`: `define_class!` builds the
+    /// class, and something has to make the first instance of it.
+    fn new_response_handler() -> Retained<ResponseHandler> {
+        let this = ResponseHandler::alloc().set_ivars(());
+        // SAFETY: `init` on a freshly allocated instance of a class that
+        // declares NSObject as its superclass, so NSObject's implementation
+        // applies and the object is fully initialised on return.
+        unsafe { msg_send![super(this), init] }
     }
 
     fn short_key(hex: &str) -> String {
