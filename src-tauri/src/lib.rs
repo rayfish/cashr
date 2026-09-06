@@ -9,16 +9,41 @@ mod tray;
 mod views;
 mod window;
 
+use std::fs::File;
+use std::sync::Mutex;
+
 use anyhow::Result;
 use signer_core::storage::Storage;
 use tauri::{Manager, WindowEvent};
 use tracing::Level;
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::state::AppState;
 
+/// Log to stderr and, when there is somewhere to put it, to a file.
+///
+/// A bundled app has nowhere to write stderr, so the file is what makes a
+/// misbehaving signer explicable without starting it from a terminal. It is
+/// truncated per launch: what matters is the run in front of you, and an
+/// unbounded log on a signer is its own problem.
+fn start_logging() {
+    let file = paths::log()
+        .ok()
+        .and_then(|path| File::create(path).ok())
+        .map(|file| fmt::layer().with_ansi(false).with_writer(Mutex::new(file)));
+
+    tracing_subscriber::registry()
+        .with(LevelFilter::from_level(Level::DEBUG))
+        .with(fmt::layer())
+        .with(file)
+        .init();
+}
+
 pub fn run() -> Result<()> {
-    fmt().with_max_level(Level::DEBUG).init();
+    start_logging();
 
     tauri::Builder::default()
         .setup(|app| {

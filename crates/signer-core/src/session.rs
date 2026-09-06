@@ -394,6 +394,8 @@ impl Session {
             requested_at: Timestamp::now(),
         };
 
+        tracing::debug!(client = %client.public_key, "asking the user: {}", request.detail);
+
         let _gate = self.prompt_gate.lock().await;
         let answer = timeout(self.config.request_timeout, self.approver.request(request)).await;
 

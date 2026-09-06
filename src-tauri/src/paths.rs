@@ -1,4 +1,4 @@
-//! Where the signer keeps its database.
+//! Where the signer keeps its database and its log.
 
 use std::path::PathBuf;
 
@@ -14,4 +14,18 @@ pub fn database(app: &AppHandle) -> Result<PathBuf> {
         .map_err(|e| anyhow!("no application data directory: {e}"))?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("signer.db"))
+}
+
+/// `~/Library/Logs/Byrgi/byrgi.log`.
+///
+/// Worked out from the home directory rather than asked of Tauri, because
+/// logging starts before there is an app to ask. A bundled app has nowhere to
+/// write stderr, so without this the only way to see what the signer did is to
+/// start it from a terminal, which is also a good way to stop notifications
+/// registering.
+pub fn log() -> Result<PathBuf> {
+    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("no home directory"))?;
+    let dir = PathBuf::from(home).join("Library/Logs/Byrgi");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("byrgi.log"))
 }
