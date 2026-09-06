@@ -8,6 +8,7 @@ use nostr::types::RelayUrl;
 use signer_core::account::AccountId;
 use signer_core::approval::ApprovalDecision;
 use signer_core::client::ClientId;
+use signer_core::kinds;
 use signer_core::pairing::{accept_client_uri, mint_bunker_uri};
 use signer_core::policy::Decision;
 use tauri::{AppHandle, Runtime, State};
@@ -234,6 +235,7 @@ pub fn prompts(state: State<'_, AppState>) -> CommandResult<Vec<PromptView>> {
             detail: pending.request.detail,
             method: pending.request.scope.method.to_string(),
             kind: pending.request.scope.kind.map(|k| k.as_u16()),
+            kind_name: pending.request.scope.kind.and_then(kinds::name),
             requested_at: pending.request.requested_at.as_secs(),
         })
         .collect())

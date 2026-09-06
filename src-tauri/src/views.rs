@@ -8,6 +8,7 @@ use nostr::nips::nip46::NostrConnectMethod;
 use serde::Serialize;
 use signer_core::account::Account;
 use signer_core::client::Client;
+use signer_core::kinds;
 use signer_core::policy::{Decision, Rule, Scope};
 use signer_core::storage::ActivityEntry;
 use signer_core::transport::RelayHealth;
@@ -65,6 +66,9 @@ pub struct RuleView {
     pub method: String,
     /// `null` means the rule covers every kind for that method.
     pub kind: Option<u16>,
+    /// A name for the kind where there is one, so the window does not have to
+    /// carry its own copy of the list.
+    pub kind_name: Option<&'static str>,
     pub allow: bool,
 }
 
@@ -73,6 +77,7 @@ impl From<&Rule> for RuleView {
         Self {
             method: rule.scope.method.to_string(),
             kind: rule.scope.kind.map(|k| k.as_u16()),
+            kind_name: rule.scope.kind.and_then(kinds::name),
             allow: rule.decision == Decision::Allow,
         }
     }
@@ -84,6 +89,7 @@ pub struct ActivityView {
     pub client: Option<i64>,
     pub method: String,
     pub kind: Option<u16>,
+    pub kind_name: Option<&'static str>,
     pub outcome: String,
     pub source: String,
     pub detail: Option<String>,
@@ -97,6 +103,7 @@ impl From<&ActivityEntry> for ActivityView {
             client: entry.client.map(|c| c.get()),
             method: entry.method.to_string(),
             kind: entry.kind.map(|k| k.as_u16()),
+            kind_name: entry.kind.and_then(kinds::name),
             outcome: entry.outcome.as_str().to_string(),
             source: entry.source.as_str().to_string(),
             detail: entry.detail.clone(),
@@ -133,6 +140,7 @@ pub struct PromptView {
     pub detail: String,
     pub method: String,
     pub kind: Option<u16>,
+    pub kind_name: Option<&'static str>,
     pub requested_at: u64,
 }
 

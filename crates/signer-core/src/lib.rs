@@ -13,6 +13,7 @@ pub mod approval;
 pub mod client;
 pub mod error;
 pub mod keystore;
+pub mod kinds;
 pub mod pairing;
 pub mod policy;
 pub mod runner;

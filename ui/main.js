@@ -84,6 +84,19 @@ function empty(text) {
   return el("div", "empty", text);
 }
 
+/// What a rule or a log line covers. The kind number is the truth and stays in
+/// the tooltip; the name is only there so a narrow window reads as English.
+function scopeLabel(method, kind, kindName) {
+  if (kind === null || kind === undefined) return method;
+  return `${method} · ${kindName ?? `kind ${kind}`}`;
+}
+
+function scopeTitle(method, kind) {
+  return kind === null || kind === undefined
+    ? method
+    : `${method} · kind ${kind}`;
+}
+
 /// Copy to the clipboard, and say so on the button that asked.
 async function copy(text, button) {
   const label = button.textContent;
@@ -409,9 +422,10 @@ async function refreshRules() {
 
   for (const rule of rules) {
     const card = el("div", "card");
-    const what = rule.kind === null ? rule.method : `${rule.method} · kind ${rule.kind}`;
+    const what = el("span", "grow", scopeLabel(rule.method, rule.kind, rule.kind_name));
+    what.title = scopeTitle(rule.method, rule.kind);
     card.append(
-      el("span", "grow", what),
+      what,
       el("span", `pill ${rule.allow ? "is-allow" : "is-deny"}`, rule.allow ? "allow" : "deny"),
     );
 
@@ -471,11 +485,9 @@ async function refreshActivity(append = false) {
   for (const entry of entries) {
     const card = el("div", "card");
     const grow = el("div", "grow");
-    const what = entry.kind === null ? entry.method : `${entry.method} · kind ${entry.kind}`;
-    grow.append(
-      el("div", null, what),
-      el("div", "mono", `${when(entry.at)} · ${entry.source}`),
-    );
+    const what = el("div", null, scopeLabel(entry.method, entry.kind, entry.kind_name));
+    what.title = scopeTitle(entry.method, entry.kind);
+    grow.append(what, el("div", "mono", `${when(entry.at)} · ${entry.source}`));
     card.append(
       grow,
       el("span", `pill ${OUTCOME_PILL[entry.outcome] ?? ""}`, entry.outcome),

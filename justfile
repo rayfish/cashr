@@ -46,8 +46,20 @@ dev: _needs-tauri
     cd src-tauri && cargo tauri dev
 
 # Generate the icon set from icons/icon.png
+# Regenerate the icon set from icons/icon.svg. Needs rsvg-convert.
 icon: _needs-tauri
-    cd src-tauri && cargo tauri icon icons/icon.png
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd src-tauri/icons
+    rsvg-convert -w 36 -h 36 tray.svg -o tray.png
+    for size in 32 64 128 512; do
+        rsvg-convert -w "$size" -h "$size" icon.svg -o "${size}x${size}.png"
+    done
+    rsvg-convert -w 256 -h 256 icon.svg -o '128x128@2x.png'
+    rsvg-convert -w 1024 -h 1024 icon.svg -o icon.png
+    # icon.png is the 1024 master the Tauri CLI wants; the bundle itself is
+    # built from the sizes above, which are the ones an icns can hold.
+    cd .. && cargo tauri icon icons/icon.png
 
 # Create the self-signed code signing identity, once per Mac
 [macos]

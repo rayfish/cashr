@@ -9,6 +9,7 @@ use nostr::types::Timestamp;
 use crate::account::AccountId;
 use crate::client::ClientId;
 use crate::error::Result;
+use crate::kinds;
 use crate::policy::{Decision, Scope};
 
 /// Everything the prompt needs to show. Assembled by the session, rendered by
@@ -118,7 +119,12 @@ impl Notifier for NullNotifier {
 pub fn describe(scope: Scope, event_kind: Option<Kind>) -> String {
     match scope.method {
         NostrConnectMethod::SignEvent => match event_kind {
-            Some(kind) => format!("sign a kind {} event", kind.as_u16()),
+            // The number stays next to the name. The name is our gloss, and a
+            // client asking for something unusual should still be legible.
+            Some(kind) => match kinds::name(kind) {
+                Some(name) => format!("sign a {name} (kind {})", kind.as_u16()),
+                None => format!("sign a kind {} event", kind.as_u16()),
+            },
             None => "sign an event".to_string(),
         },
         other => other.to_string(),
