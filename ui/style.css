@@ -30,6 +30,12 @@
   box-sizing: border-box;
 }
 
+/* An author `display` beats the user agent's rule for `hidden`, and several
+   below set one, so say it once here rather than at each of them. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -139,6 +145,18 @@ h2 {
   color: var(--muted);
   margin: 16px 0 6px;
   font-weight: 600;
+}
+
+/* A heading with its own button, which keeps the button on the heading's
+   baseline instead of on a row of its own. */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.head h2 {
+  flex: 1;
 }
 
 /* ----------------------------------------------------------------- cards */
@@ -299,6 +317,16 @@ button.icon[aria-pressed="true"] {
   color: var(--accent);
 }
 
+button.plus {
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+button.plus[aria-expanded="true"] {
+  color: var(--accent);
+}
+
 /* ---------------------------------------------------------------- prompts */
 
 .prompts {
@@ -388,12 +416,6 @@ button.icon[aria-pressed="true"] {
   font-size: 11px;
   word-break: break-all;
   color: var(--muted);
-}
-
-details summary {
-  cursor: default;
-  color: var(--muted);
-  margin-top: 4px;
 }
 
 .toast {

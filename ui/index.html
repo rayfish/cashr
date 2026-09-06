@@ -50,10 +50,20 @@
           <button id="relay-add">Add</button>
         </div>
 
-        <h2>Accounts</h2>
+        <div class="head">
+          <h2>Accounts</h2>
+          <button
+            id="account-add"
+            class="icon plus"
+            title="Add an account"
+            aria-expanded="false"
+            aria-controls="account-new"
+          >
+            +
+          </button>
+        </div>
         <div id="account-list" class="list"></div>
-        <details id="account-new">
-          <summary>Add an account</summary>
+        <div id="account-new" hidden>
           <div class="row">
             <input id="account-label" type="text" placeholder="Label" />
             <button id="account-create" class="primary">New key</button>
@@ -71,7 +81,7 @@
             An imported key goes straight into the Keychain. It is never written
             to the database.
           </p>
-        </details>
+        </div>
       </section>
 
       <section id="tab-clients" class="panel">

@@ -554,10 +554,19 @@ function wire() {
     }
   });
 
+  const showAccountForm = (shown) => {
+    $("account-new").hidden = !shown;
+    $("account-add").setAttribute("aria-expanded", String(shown));
+    if (shown) $("account-label").focus();
+  };
+
+  $("account-add").onclick = () => showAccountForm($("account-new").hidden);
+
   $("account-create").onclick = async () => {
     const label = $("account-label").value.trim() || "Account";
     await call("create_account", { label });
     $("account-label").value = "";
+    showAccountForm(false);
     await refreshAll();
   };
 
@@ -568,6 +577,7 @@ function wire() {
     await call("import_account", { label, secret });
     $("account-secret").value = "";
     $("account-label").value = "";
+    showAccountForm(false);
     await refreshAll();
   };
 
