@@ -7,8 +7,11 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+futures.workspace = true
 nostr.workspace = true
-nostr-sdk = { version = "0.45", default-features = false }
 signer-core = { path = "../signer-core" }
 tokio.workspace = true
 tracing.workspace = true
+url.workspace = true
+# Defaults to the rustls-ring backend, so nothing here wants a system OpenSSL.
+yawc.workspace = true

@@ -92,7 +92,12 @@ impl Transport for FakeTransport {
             .expect("listen is called once per test"))
     }
 
-    async fn publish(&self, event: Event, _relays: Vec<RelayUrl>) -> Result<()> {
+    async fn publish(
+        &self,
+        _account: AccountId,
+        event: Event,
+        _relays: Vec<RelayUrl>,
+    ) -> Result<()> {
         self.published
             .lock()
             .expect("test lock is uncontended")
@@ -212,7 +217,7 @@ async fn the_account_loop_answers_requests_over_the_transport() {
         .await
         .expect("vault unlocks");
 
-    let handle = fixture
+    fixture
         .runner
         .start(fixture.account.clone())
         .await
@@ -229,7 +234,7 @@ async fn the_account_loop_answers_requests_over_the_transport() {
         .expect("event is queued");
 
     settle().await;
-    handle.abort();
+    fixture.runner.stop(fixture.account.id).await;
 
     let sent = published.lock().expect("test lock is uncontended").clone();
     assert_eq!(sent.len(), 2);
@@ -251,7 +256,7 @@ async fn the_account_loop_answers_requests_over_the_transport() {
 async fn requests_that_arrive_locked_are_answered_after_unlocking() {
     let (fixture, incoming, published) = build();
 
-    let handle = fixture
+    fixture
         .runner
         .start(fixture.account.clone())
         .await
@@ -285,7 +290,7 @@ async fn requests_that_arrive_locked_are_answered_after_unlocking() {
         .expect("deferred requests replay");
 
     settle().await;
-    handle.abort();
+    fixture.runner.stop(fixture.account.id).await;
 
     assert_eq!(published.lock().expect("test lock is uncontended").len(), 1);
 }

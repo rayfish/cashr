@@ -15,9 +15,7 @@ use signer_core::runner::Runner;
 use signer_core::session::{Session, SessionConfig, SessionParts};
 use signer_core::storage::{NewAccount, Storage};
 use signer_core::vault::Vault;
-use signer_core::AsyncMutex;
 use tauri::{AppHandle, Emitter};
-use tokio::task::JoinHandle;
 
 /// Relays the signer listens on when an account does not name its own.
 ///
@@ -76,7 +74,6 @@ pub struct AppState {
     pub runner: Runner,
     pub approver: Arc<NotificationApprover>,
     pub keystore: Arc<KeychainKeyStore>,
-    tasks: AsyncMutex<Vec<JoinHandle<()>>>,
 }
 
 impl AppState {
@@ -107,7 +104,6 @@ impl AppState {
             runner,
             approver,
             keystore,
-            tasks: AsyncMutex::new(Vec::new()),
         })
     }
 
@@ -122,13 +118,9 @@ impl AppState {
         let ids: Vec<AccountId> = accounts.iter().map(|a| a.id).collect();
         self.session.unlock(&ids).await?;
 
-        let mut tasks = self.tasks.lock().await;
-        if tasks.is_empty() {
-            for account in &accounts {
-                tasks.push(self.runner.start(account.clone()).await?);
-            }
+        for account in &accounts {
+            self.runner.start(account.clone()).await?;
         }
-        drop(tasks);
 
         self.runner.replay_deferred(&accounts).await?;
         Ok(())
@@ -182,8 +174,21 @@ impl AppState {
         Ok(account)
     }
 
+    /// Point an account at a different relay list and reconnect.
+    ///
+    /// Without the restart the new list would only take effect on the next
+    /// launch, which looks exactly like the setting not working.
+    pub async fn set_relays(&self, id: AccountId, relays: &[RelayUrl]) -> Result<()> {
+        self.storage.set_account_relays(id, relays)?;
+        if self.session.vault().holds(id) {
+            self.runner.start(self.storage.account(id)?).await?;
+        }
+        Ok(())
+    }
+
     /// Remove an account, its keys and everything hanging off it.
     pub async fn delete_account(&self, id: AccountId) -> Result<()> {
+        self.runner.stop(id).await;
         self.keystore
             .delete(KeyHandle::new(id, KeyRole::Identity))
             .await?;

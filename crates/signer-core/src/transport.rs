@@ -33,7 +33,22 @@ pub trait Transport: Send + Sync + 'static {
     /// Begin receiving NIP-46 events addressed to the subscription's pubkey.
     async fn listen(&self, subscription: Subscription) -> Result<Receiver<Event>>;
 
-    async fn publish(&self, event: Event, relays: Vec<RelayUrl>) -> Result<()>;
+    /// Publish `event` on behalf of `account`.
+    ///
+    /// The account is part of the signature because connections are per
+    /// account: two accounts sharing one socket to a relay would tie them
+    /// together for that operator, which is the thing separate transport keys
+    /// exist to avoid.
+    async fn publish(&self, account: AccountId, event: Event, relays: Vec<RelayUrl>) -> Result<()>;
 
     async fn health(&self, account: AccountId) -> Vec<RelayHealth>;
+
+    /// Close an account's connections.
+    ///
+    /// Called when an account is deleted or its relay list changes. The
+    /// default does nothing, which is right for a transport that holds no
+    /// connections of its own.
+    async fn stop(&self, account: AccountId) {
+        let _ = account;
+    }
 }

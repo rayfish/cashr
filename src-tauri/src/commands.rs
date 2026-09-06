@@ -87,15 +87,15 @@ pub fn set_default_account(state: State<'_, AppState>, account: i64) -> CommandR
 }
 
 #[tauri::command]
-pub fn set_relays(
+pub async fn set_relays(
     state: State<'_, AppState>,
     account: i64,
     relays: Vec<String>,
 ) -> CommandResult<()> {
     let parsed: Result<Vec<RelayUrl>, _> = relays.iter().map(|u| RelayUrl::parse(u)).collect();
     state
-        .storage
-        .set_account_relays(AccountId::new(account), &parsed.map_err(fail)?)
+        .set_relays(AccountId::new(account), &parsed.map_err(fail)?)
+        .await
         .map_err(fail)
 }
 

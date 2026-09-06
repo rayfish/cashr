@@ -7,7 +7,7 @@ rule before anything is signed.
 ## Layout
 
     crates/signer-core     policy, NIP-46 sessions, storage. No Tauri, no macOS.
-    crates/relay-transport the relay pool behind signer-core's Transport trait
+    crates/relay-transport relay websockets behind signer-core's Transport trait
     crates/macos-native    Keychain and notification prompts
     src-tauri              the app: tray, window, commands
     ui                     the window's frontend, plain HTML and JS
@@ -83,3 +83,11 @@ buttons. A Focus mode can suppress that notification, so the tray icon badges
 and the window lists pending requests: a prompt nobody saw is still reachable.
 
 The database holds metadata only. No key material is ever written to it.
+
+Relay connections are one socket per account per relay, over yawc with
+permessage-deflate. Two accounts never share a connection: that would tie them
+together for the relay operator, which is the thing separate transport keys
+exist to prevent. Each connection reconnects on its own with backoff, so a
+relay being down is a property of that relay rather than something that stops
+an account. TLS is rustls throughout; nothing in the tree wants a system
+OpenSSL.
