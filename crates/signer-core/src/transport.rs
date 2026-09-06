@@ -1,0 +1,39 @@
+//! The relay boundary.
+//!
+//! Keeping this a trait is what lets the session machine be tested without a
+//! relay, and keeps `nostr-sdk` out of the logic that decides what to sign.
+
+use async_trait::async_trait;
+use nostr::event::Event;
+use nostr::key::PublicKey;
+use nostr::types::RelayUrl;
+use tokio::sync::mpsc::Receiver;
+
+use crate::account::AccountId;
+use crate::error::Result;
+
+/// One account's listening position: which pubkey, on which relays.
+#[derive(Debug, Clone)]
+pub struct Subscription {
+    pub account: AccountId,
+    pub signer_public_key: PublicKey,
+    pub relays: Vec<RelayUrl>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayHealth {
+    pub relay: RelayUrl,
+    pub connected: bool,
+    /// Last error the relay reported, if it is not connected.
+    pub last_error: Option<String>,
+}
+
+#[async_trait]
+pub trait Transport: Send + Sync + 'static {
+    /// Begin receiving NIP-46 events addressed to the subscription's pubkey.
+    async fn listen(&self, subscription: Subscription) -> Result<Receiver<Event>>;
+
+    async fn publish(&self, event: Event, relays: Vec<RelayUrl>) -> Result<()>;
+
+    async fn health(&self, account: AccountId) -> Vec<RelayHealth>;
+}

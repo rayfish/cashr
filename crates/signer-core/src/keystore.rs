@@ -1,0 +1,78 @@
+//! The key storage boundary.
+//!
+//! Production backs this with the macOS Keychain. Tests back it with memory.
+//! Nothing in this crate below the trait knows which it is talking to.
+
+use async_trait::async_trait;
+use nostr::key::{Keys, PublicKey, SecretKey};
+use thiserror::Error;
+
+use crate::account::AccountId;
+
+#[derive(Debug, Error)]
+pub enum KeyStoreError {
+    #[error("no key stored for {0}")]
+    NotFound(KeyHandle),
+
+    #[error("the user cancelled authentication")]
+    Cancelled,
+
+    #[error("authentication is not available on this device")]
+    AuthUnavailable,
+
+    #[error("keystore backend: {0}")]
+    Backend(String),
+}
+
+/// Which of an account's two keys is meant.
+///
+/// The identity key is the npub. The transport key is what the bunker listens
+/// on, so relay operators do not get a log of the identity's connections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyRole {
+    Identity,
+    Transport,
+}
+
+impl KeyRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Identity => "identity",
+            Self::Transport => "transport",
+        }
+    }
+}
+
+/// Names one stored key. Used as the Keychain item account attribute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyHandle {
+    pub account: AccountId,
+    pub role: KeyRole,
+}
+
+impl KeyHandle {
+    pub fn new(account: AccountId, role: KeyRole) -> Self {
+        Self { account, role }
+    }
+}
+
+impl std::fmt::Display for KeyHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.account, self.role.as_str())
+    }
+}
+
+#[async_trait]
+pub trait KeyStore: Send + Sync + 'static {
+    /// Read a key out of storage. On macOS this is what triggers Touch ID.
+    async fn load(&self, handle: KeyHandle) -> Result<Keys, KeyStoreError>;
+
+    async fn store(&self, handle: KeyHandle, secret: SecretKey) -> Result<(), KeyStoreError>;
+
+    async fn delete(&self, handle: KeyHandle) -> Result<(), KeyStoreError>;
+
+    /// Public key without unlocking, when the backend can manage it.
+    async fn public_key(&self, handle: KeyHandle) -> Result<PublicKey, KeyStoreError> {
+        Ok(self.load(handle).await?.public_key())
+    }
+}
