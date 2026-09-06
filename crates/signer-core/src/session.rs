@@ -157,16 +157,30 @@ impl Session {
         }
 
         let sender = event.pubkey;
-        let plaintext = self
+        let plaintext = match self
             .vault
             .open_envelope(account.id, &sender, &event.content)
-            .ok()?;
+        {
+            Ok(plaintext) => plaintext,
+            Err(error) => {
+                tracing::debug!(%sender, "envelope will not open: {error}");
+                return None;
+            }
+        };
 
-        let message: NostrConnectMessage = serde_json::from_str(&plaintext).ok()?;
+        let message: NostrConnectMessage = match serde_json::from_str(&plaintext) {
+            Ok(message) => message,
+            Err(error) => {
+                tracing::debug!(%sender, "envelope holds no nostr connect message: {error}");
+                return None;
+            }
+        };
         let (id, method, params) = match message {
             NostrConnectMessage::Request { id, method, params } => (id, method, params),
             NostrConnectMessage::Response { .. } => return None,
         };
+
+        tracing::debug!(%sender, %method, "handling a request");
 
         if let Some(cached) = self.cached_answer(&sender, &id).await {
             return Some(cached);
@@ -180,14 +194,17 @@ impl Session {
             }
         };
 
-        let sealed = self
-            .vault
-            .seal_envelope(
-                account.id,
-                sender,
-                NostrConnectMessage::response(id.clone(), response),
-            )
-            .ok()?;
+        let sealed = match self.vault.seal_envelope(
+            account.id,
+            sender,
+            NostrConnectMessage::response(id.clone(), response),
+        ) {
+            Ok(sealed) => sealed,
+            Err(error) => {
+                tracing::warn!(%sender, "could not seal the answer: {error}");
+                return None;
+            }
+        };
 
         self.remember_answer(sender, id, sealed.clone()).await;
         Some(sealed)

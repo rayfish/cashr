@@ -89,6 +89,7 @@ impl Runner {
 
         Ok(tokio::spawn(async move {
             while let Some(event) = incoming.recv().await {
+                tracing::debug!(account = %account.id, sender = %event.pubkey, "an event arrived");
                 if let Some(response) = session.handle(&account, event).await {
                     publish(transport.as_ref(), account.id, response, relays.clone()).await;
                 }
