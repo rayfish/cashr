@@ -7,56 +7,71 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <header class="titlebar" data-tauri-drag-region>
-      <span class="title">nostr-tray</span>
-      <span id="lock-state" class="pill">locked</span>
-      <button id="lock-toggle" class="ghost">Unlock</button>
+    <header class="bar">
+      <span class="brand">
+        <span id="lock-dot" class="dot"></span>
+        <select id="account-picker" class="picker" title="Active account"></select>
+      </span>
+      <button id="lock-toggle" class="icon" title="Unlock">Unlock</button>
+      <button id="pin-toggle" class="icon" title="Keep the window open" aria-pressed="false">
+        Pin
+      </button>
+      <button id="close" class="icon" title="Close">&times;</button>
     </header>
 
     <section id="prompts" class="prompts" hidden></section>
 
-    <nav class="tabs">
-      <button class="tab is-active" data-tab="accounts">Accounts</button>
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" data-tab="home">Account</button>
       <button class="tab" data-tab="clients">Clients</button>
       <button class="tab" data-tab="rules">Rules</button>
       <button class="tab" data-tab="activity">Activity</button>
     </nav>
 
-    <main>
-      <section id="tab-accounts" class="panel is-active">
-        <div id="account-list" class="list"></div>
-        <div class="row">
-          <input id="account-label" type="text" placeholder="Label" />
-          <button id="account-create">New key</button>
+    <main id="scroll">
+      <section id="tab-home" class="panel is-active">
+        <div id="account-card" class="card stack"></div>
+
+        <h2>Pair a client</h2>
+        <div class="split">
+          <button id="pair-bunker" class="primary">Copy bunker URI</button>
+          <button id="pair-paste">Paste nostrconnect URI</button>
         </div>
-        <details>
-          <summary>Import an existing key</summary>
-          <div class="row">
-            <input id="account-secret" type="password" placeholder="nsec1… or hex" />
-            <button id="account-import">Import</button>
-          </div>
-          <p class="hint">
-            The key goes straight into the Keychain. It is never written to the
-            database.
-          </p>
-        </details>
+        <div id="pair-form" class="row" hidden>
+          <input id="pair-uri" type="text" placeholder="nostrconnect://…" spellcheck="false" />
+          <button id="pair-client" class="primary">Accept</button>
+        </div>
+        <output id="pair-output" class="output" hidden></output>
 
         <h2>Relays</h2>
         <div id="relay-list" class="list"></div>
         <div class="row">
-          <input id="relay-url" type="text" placeholder="wss://relay.example" />
+          <input id="relay-url" type="text" placeholder="wss://relay.example" spellcheck="false" />
           <button id="relay-add">Add</button>
         </div>
 
-        <h2>Pair a client</h2>
-        <div class="row">
-          <button id="pair-bunker">Copy bunker:// URI</button>
-        </div>
-        <output id="pair-output" class="output"></output>
-        <div class="row">
-          <input id="pair-uri" type="text" placeholder="nostrconnect://…" />
-          <button id="pair-client">Accept</button>
-        </div>
+        <h2>Accounts</h2>
+        <div id="account-list" class="list"></div>
+        <details id="account-new">
+          <summary>Add an account</summary>
+          <div class="row">
+            <input id="account-label" type="text" placeholder="Label" />
+            <button id="account-create" class="primary">New key</button>
+          </div>
+          <div class="row">
+            <input
+              id="account-secret"
+              type="password"
+              placeholder="nsec1… or hex"
+              spellcheck="false"
+            />
+            <button id="account-import">Import</button>
+          </div>
+          <p class="hint">
+            An imported key goes straight into the Keychain. It is never written
+            to the database.
+          </p>
+        </details>
       </section>
 
       <section id="tab-clients" class="panel">
@@ -64,17 +79,23 @@
       </section>
 
       <section id="tab-rules" class="panel">
-        <select id="rule-client"></select>
+        <select id="rule-client" class="picker wide"></select>
         <div id="rule-list" class="list"></div>
       </section>
 
       <section id="tab-activity" class="panel">
         <div id="activity-list" class="list"></div>
-        <button id="activity-more" class="ghost">Load more</button>
+        <button id="activity-more" class="ghost wide" hidden>Load more</button>
       </section>
     </main>
 
-    <footer id="error" class="error" hidden></footer>
+    <footer class="bar foot">
+      <span id="relay-summary" class="muted">no relays</span>
+      <span class="grow"></span>
+      <span id="pending-summary" class="muted"></span>
+    </footer>
+
+    <div id="toast" class="toast" hidden></div>
     <script src="main.js"></script>
   </body>
 </html>

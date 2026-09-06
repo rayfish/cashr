@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use tauri::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tauri::tray::{TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::state::AppState;
@@ -28,22 +28,36 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> Result<TrayIcon<R>> {
 
     let icon = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        // The menu belongs to the right button. A left click opens the window,
-        // which is what a menu bar utility is expected to do.
+        // The menu belongs to the right button. The left button opens the
+        // window under the icon, which is what a menu bar utility does.
         .show_menu_on_left_click(false)
         .icon(app.default_window_icon().cloned().ok_or_else(|| {
             anyhow::anyhow!("the bundle has no icon; tauri.conf.json bundle.icon is wrong")
         })?)
         .icon_as_template(true)
         .on_menu_event(on_menu_event)
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { .. } = event {
-                window::show(tray.app_handle());
-            }
-        })
+        .on_tray_icon_event(on_tray_event)
         .build(app)?;
 
     Ok(icon)
+}
+
+fn on_tray_event<R: Runtime>(tray: &TrayIcon<R>, event: TrayIconEvent) {
+    // Only the release of the left button. The press arrives as its own event,
+    // and the right button already has the menu, so acting on every click
+    // would toggle the window twice per click and fight the menu.
+    let TrayIconEvent::Click {
+        button: MouseButton::Left,
+        button_state: MouseButtonState::Up,
+        rect,
+        ..
+    } = event
+    else {
+        return;
+    };
+
+    let app = tray.app_handle();
+    window::toggle_under(app, &app.state::<AppState>().window, rect);
 }
 
 fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {

@@ -10,13 +10,14 @@ use signer_core::approval::ApprovalDecision;
 use signer_core::client::ClientId;
 use signer_core::pairing::{accept_client_uri, mint_bunker_uri};
 use signer_core::policy::Decision;
-use tauri::State;
+use tauri::{AppHandle, Runtime, State};
 
 use crate::state::AppState;
 use crate::views::{
     method_from_str, scope_from_parts, AccountView, ActivityView, ClientView, PromptView,
     RelayView, RuleView, StatusView,
 };
+use crate::window;
 
 /// How long a minted pairing URI stays usable. Long enough to paste it
 /// somewhere, short enough that a stale one in a clipboard is worthless.
@@ -255,4 +256,19 @@ pub fn answer_prompt(
     };
     let id = RequestId::parse(&id.to_string()).ok_or_else(|| "bad request id".to_string())?;
     Ok(state.approver.resolve(id, decision))
+}
+
+/// Keep the window open while it does not have focus.
+///
+/// The frontend raises this for the pin button, while an approval is waiting
+/// and around any call that can put a system dialog in front of the window.
+/// Without it a Touch ID prompt would send the window away mid-unlock.
+#[tauri::command]
+pub fn set_pinned(state: State<'_, AppState>, pinned: bool) {
+    state.window.set_pinned(pinned);
+}
+
+#[tauri::command]
+pub fn hide_window<R: Runtime>(app: AppHandle<R>, state: State<'_, AppState>) {
+    window::hide(&app, &state.window);
 }

@@ -17,6 +17,8 @@ use signer_core::storage::{NewAccount, Storage};
 use signer_core::vault::Vault;
 use tauri::{AppHandle, Emitter};
 
+use crate::window::WindowState;
+
 /// Relays the signer listens on when an account does not name its own.
 ///
 /// Shipping defaults means pairing works out of the box; the cost is that
@@ -74,6 +76,7 @@ pub struct AppState {
     pub runner: Runner,
     pub approver: Arc<NotificationApprover>,
     pub keystore: Arc<KeychainKeyStore>,
+    pub window: WindowState,
 }
 
 impl AppState {
@@ -104,6 +107,7 @@ impl AppState {
             runner,
             approver,
             keystore,
+            window: WindowState::default(),
         })
     }
 

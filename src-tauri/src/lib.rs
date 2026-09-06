@@ -52,13 +52,23 @@ pub fn run() -> Result<()> {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
+        .on_window_event(|target, event| match event {
             // Closing the window must not quit a signer that is meant to keep
             // answering requests. Quit is on the tray menu, deliberately.
-            if let WindowEvent::CloseRequested { api, .. } = event {
+            WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                let _ = window.hide();
+                let _ = target.hide();
             }
+            // A popover goes away when you look elsewhere. The pin is the
+            // escape hatch, and the frontend holds it while a pairing URI is
+            // being pasted or while a system dialog has the focus.
+            WindowEvent::Focused(false) => {
+                let state = target.state::<AppState>();
+                if !state.window.is_pinned() {
+                    window::hide(target.app_handle(), &state.window);
+                }
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::status,
@@ -80,6 +90,8 @@ pub fn run() -> Result<()> {
             commands::activity,
             commands::prompts,
             commands::answer_prompt,
+            commands::set_pinned,
+            commands::hide_window,
         ])
         .run(tauri::generate_context!())?;
 

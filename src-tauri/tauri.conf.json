@@ -11,12 +11,15 @@
       {
         "label": "main",
         "title": "nostr-tray",
-        "width": 460,
-        "height": 620,
-        "resizable": true,
+        "width": 400,
+        "height": 560,
+        "resizable": false,
         "visible": false,
-        "titleBarStyle": "Transparent",
-        "hiddenTitle": true
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": true,
+        "focus": true
       }
     ],
     "security": {

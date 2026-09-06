@@ -78,6 +78,13 @@ Permissions are stored per client, per method, and per event kind for
 most specific first: an exact kind rule, then a method-wide rule, then the
 user is asked.
 
+Left click on the menu bar icon opens the window under it and clicking again
+puts it away. Right click gets the menu. The window is a popover: no title bar,
+and it hides when it loses focus. The pin in its header holds it open, which is
+what you want while pasting a `nostrconnect://` URI in from a browser, and it
+is held automatically while an approval is waiting or while Touch ID has the
+focus.
+
 A request with no stored rule posts a notification with Approve and Reject
 buttons. A Focus mode can suppress that notification, so the tray icon badges
 and the window lists pending requests: a prompt nobody saw is still reachable.
