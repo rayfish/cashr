@@ -23,56 +23,58 @@ pub async fn require(reason: &str) -> Result<(), KeyStoreError> {
 
 #[cfg(target_os = "macos")]
 mod platform {
+    use std::sync::mpsc::channel;
+
     use block2::RcBlock;
-    use objc2::rc::Retained;
     use objc2::runtime::Bool;
     use objc2_foundation::{NSError, NSInteger, NSString};
     use objc2_local_authentication::{LAContext, LAError, LAPolicy};
     use signer_core::keystore::KeyStoreError;
-    use tokio::sync::oneshot::{channel, Sender};
-
-    use std::sync::Mutex;
+    use tokio::task::spawn_blocking;
 
     /// What the reply block hands back: the code when it refused, or nothing
     /// when it passed.
     type Answer = Option<NSInteger>;
 
     pub(super) async fn require(reason: &str) -> Result<(), KeyStoreError> {
-        let (tx, rx) = channel::<Answer>();
-        // The block is `Fn`, so it could in principle run twice; the sender
-        // can only be used once. Taking it out of the Mutex makes a second
-        // call a no-op rather than a panic.
-        let tx: Mutex<Option<Sender<Answer>>> = Mutex::new(Some(tx));
+        let reason = reason.to_string();
 
-        let reply = RcBlock::new(move |ok: Bool, error: *mut NSError| {
-            let answer = if ok.as_bool() {
-                None
-            } else {
-                Some(unsafe { error.as_ref() }.map_or(0, |error| error.code()))
-            };
-            if let Some(tx) = tx.lock().ok().and_then(|mut held| held.take()) {
+        // On a blocking thread, and not because the call is slow. Neither the
+        // context nor the block is `Send`, and an `LAContext` that is released
+        // cancels the evaluation it started, so it has to stay alive until the
+        // answer arrives. Holding both on one thread that waits keeps that
+        // simple, and keeps the non-Send half out of the future entirely.
+        let answer = spawn_blocking(move || {
+            let (tx, rx) = channel::<Answer>();
+
+            let reply = RcBlock::new(move |ok: Bool, error: *mut NSError| {
+                let answer = (!ok.as_bool())
+                    .then(|| unsafe { error.as_ref() }.map_or(0, |error| error.code()));
                 let _ = tx.send(answer);
+            });
+
+            // `DeviceOwnerAuthentication` is Touch ID with the login password
+            // behind it, which is what makes this usable on a Mac with no
+            // sensor or with a finger that will not read.
+            let context = unsafe { LAContext::new() };
+            unsafe {
+                context.evaluatePolicy_localizedReason_reply(
+                    LAPolicy::DeviceOwnerAuthentication,
+                    &NSString::from_str(&reason),
+                    &reply,
+                );
             }
-        });
 
-        // `DeviceOwnerAuthentication` is Touch ID with the login password
-        // behind it, which is what makes this usable on a Mac with no sensor
-        // or with a finger that will not read.
-        let context: Retained<LAContext> = unsafe { LAContext::new() };
-        unsafe {
-            context.evaluatePolicy_localizedReason_reply(
-                LAPolicy::DeviceOwnerAuthentication,
-                &NSString::from_str(reason),
-                &reply,
-            );
-        }
+            rx.recv()
+        })
+        .await;
 
-        match rx.await {
-            Ok(None) => Ok(()),
-            Ok(Some(code)) => Err(translate(code)),
-            // The block was dropped without answering, which should not
-            // happen. Refusing is the safe reading of it.
-            Err(_) => Err(KeyStoreError::AuthFailed),
+        match answer {
+            Ok(Ok(None)) => Ok(()),
+            Ok(Ok(Some(code))) => Err(translate(code)),
+            // The block went away without answering, or the thread did.
+            // Neither should happen, and refusing is the safe reading of it.
+            Ok(Err(_)) | Err(_) => Err(KeyStoreError::AuthFailed),
         }
     }
 
