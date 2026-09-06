@@ -23,14 +23,40 @@ The core crates build and test anywhere:
     cargo test -p signer-core -p relay-transport -p macos-native
     cargo clippy -p signer-core -p relay-transport -p macos-native --all-targets -- -D warnings
 
-`src-tauri` is a separate workspace and needs a Mac. It also needs real icons
-before the first bundle:
+`src-tauri` is a separate workspace and needs a Mac:
 
-    cd src-tauri && cargo tauri icon icons/icon.png
-    cargo tauri dev
+    ./scripts/make-signing-cert.sh    # once per machine
+    ./scripts/build-macos.sh          # .app and .dmg under src-tauri/target/release/bundle
 
-Notification buttons only work from a signed, bundled app, so the dev loop is
-`tauri dev` rather than a bare `cargo run`.
+For a dev loop, `cd src-tauri && cargo tauri dev`. Notification buttons only
+work from a signed, bundled app, so a bare `cargo run` will not show them.
+
+## Signing
+
+The build is signed with a self-signed certificate created once by
+`make-signing-cert.sh`. That is not about proving anything to anyone: a
+Keychain item's ACL binds to the app's code signature, so a build signed with
+a fresh key every time looks like a different app to macOS and is refused
+access to the keys it stored last time. A stable identity is what stops your
+keys apparently vanishing after every rebuild.
+
+`UNUserNotificationCenter` is the other reason. Unsigned bundles commonly get
+"Notifications are not allowed for this application" and post nothing, which
+costs the Approve/Reject buttons. The tray badge and the window still list
+pending requests, so it degrades rather than breaks.
+
+Because the certificate is self-signed, Gatekeeper on any other Mac will
+object to the download. Installing there means right-click, Open, or:
+
+    xattr -dr com.apple.quarantine /Applications/nostr-tray.app
+
+Distributing properly needs a Developer ID Application certificate from the
+Apple Developer Program plus notarization and stapling. Nothing in the project
+blocks that: set `APPLE_SIGNING_IDENTITY` to the Developer ID instead, and add
+the notarization credentials the Tauri CLI reads.
+
+The bundle identifier `dgrr.tray.nostr` is the Keychain service name and the
+notification registration. Changing it orphans every stored key.
 
 ## How it works
 
