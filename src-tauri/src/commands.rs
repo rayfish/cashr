@@ -14,8 +14,8 @@ use tauri::State;
 
 use crate::state::AppState;
 use crate::views::{
-    method_from_str, scope_from_parts, AccountView, ActivityView, ClientView, PromptView, RelayView,
-    RuleView, StatusView,
+    method_from_str, scope_from_parts, AccountView, ActivityView, ClientView, PromptView,
+    RelayView, RuleView, StatusView,
 };
 
 /// How long a minted pairing URI stays usable. Long enough to paste it
@@ -134,7 +134,8 @@ pub fn pair_client(state: State<'_, AppState>, account: i64, uri: String) -> Com
         .account(AccountId::new(account))
         .map_err(fail)?;
     let parsed = NostrConnectUri::parse(&uri).map_err(fail)?;
-    let pairing = accept_client_uri(&state.storage, &account, &parsed, PAIRING_TTL).map_err(fail)?;
+    let pairing =
+        accept_client_uri(&state.storage, &account, &parsed, PAIRING_TTL).map_err(fail)?;
     Ok(pairing.client_public_key.to_hex())
 }
 
@@ -173,10 +174,18 @@ pub fn set_rule(
     allow: bool,
 ) -> CommandResult<()> {
     let method = method_from_str(&method).ok_or_else(|| format!("unknown method: {method}"))?;
-    let decision = if allow { Decision::Allow } else { Decision::Deny };
+    let decision = if allow {
+        Decision::Allow
+    } else {
+        Decision::Deny
+    };
     state
         .storage
-        .set_rule(ClientId::new(client), scope_from_parts(method, kind), decision)
+        .set_rule(
+            ClientId::new(client),
+            scope_from_parts(method, kind),
+            decision,
+        )
         .map_err(fail)
 }
 
@@ -237,7 +246,11 @@ pub fn answer_prompt(
     remember: bool,
 ) -> CommandResult<bool> {
     let decision = ApprovalDecision {
-        decision: if allow { Decision::Allow } else { Decision::Deny },
+        decision: if allow {
+            Decision::Allow
+        } else {
+            Decision::Deny
+        },
         remember,
     };
     let id = RequestId::parse(&id.to_string()).ok_or_else(|| "bad request id".to_string())?;

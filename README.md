@@ -18,23 +18,25 @@ signed be tested without a Mac and without a relay.
 
 ## Building
 
-The core crates build and test anywhere:
+`just --list` shows everything. The core crates build and test anywhere:
 
-    cargo test -p signer-core -p relay-transport -p macos-native
-    cargo clippy -p signer-core -p relay-transport -p macos-native --all-targets -- -D warnings
+    just check        # fmt, clippy -D warnings, test
 
-`src-tauri` is a separate workspace and needs a Mac:
+`src-tauri` is a separate workspace and needs a Mac. The macOS recipes only
+appear there:
 
-    ./scripts/make-signing-cert.sh    # once per machine
-    ./scripts/build-macos.sh          # .app and .dmg under src-tauri/target/release/bundle
+    just cert         # once per machine, creates the signing identity
+    just release      # build, sign, and report what it is signed with
+    just dev          # run from source
 
-For a dev loop, `cd src-tauri && cargo tauri dev`. Notification buttons only
-work from a signed, bundled app, so a bare `cargo run` will not show them.
+The bundle lands in `src-tauri/target/release/bundle`. Notification buttons
+only work from a signed, bundled app, so `just dev` shows the window and the
+tray but not the Approve/Reject buttons.
 
 ## Signing
 
 The build is signed with a self-signed certificate created once by
-`make-signing-cert.sh`. That is not about proving anything to anyone: a
+`just cert`. That is not about proving anything to anyone: a
 Keychain item's ACL binds to the app's code signature, so a build signed with
 a fresh key every time looks like a different app to macOS and is refused
 access to the keys it stored last time. A stable identity is what stops your
