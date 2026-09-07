@@ -35,11 +35,18 @@ pub struct Client {
     pub first_seen: Timestamp,
     pub last_seen: Timestamp,
     pub revoked_at: Option<Timestamp>,
+    /// When the user took this client off the list. Removing revokes too, so
+    /// a removed client is always a revoked one.
+    pub removed_at: Option<Timestamp>,
 }
 
 impl Client {
     pub fn is_revoked(&self) -> bool {
         self.revoked_at.is_some()
+    }
+
+    pub fn is_removed(&self) -> bool {
+        self.removed_at.is_some()
     }
 }
 

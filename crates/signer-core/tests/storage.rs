@@ -4,7 +4,7 @@ use nostr::event::Kind;
 use nostr::key::Keys;
 use nostr::nips::nip46::NostrConnectMethod;
 use nostr::types::{RelayUrl, Timestamp};
-use signer_core::client::PairingDirection;
+use signer_core::client::{ClientId, PairingDirection};
 use signer_core::policy::{Decision, Outcome, Scope};
 use signer_core::storage::{
     ActivityOutcome, ActivitySource, NewAccount, NewActivity, NewPairing, Storage,
@@ -208,6 +208,68 @@ fn revoking_a_client_drops_its_rules() {
         .is_empty());
     let clients = storage.clients(account.id).expect("clients load");
     assert!(clients[0].is_revoked());
+}
+
+#[test]
+fn removing_a_client_revokes_it_and_takes_it_off_the_list() {
+    let (storage, account) = storage_with_account();
+    let key = Keys::generate().public_key();
+    let client = storage
+        .upsert_client(account.id, &key, None)
+        .expect("client inserts");
+    storage
+        .set_rule(
+            client.id,
+            Scope::method(NostrConnectMethod::SignEvent),
+            Decision::Allow,
+        )
+        .expect("rule writes");
+
+    storage.remove_client(client.id).expect("client removes");
+
+    assert!(storage
+        .clients(account.id)
+        .expect("clients load")
+        .is_empty());
+    assert!(storage
+        .policy_set(client.id)
+        .expect("policy loads")
+        .rules()
+        .is_empty());
+
+    // Gone from the list, but the row still answers, and it answers revoked.
+    // That is what stops Remove being the softer of the two.
+    let found = storage
+        .client_by_public_key(account.id, &key)
+        .expect("lookup runs")
+        .expect("the row is still there");
+    assert!(found.is_revoked());
+    assert!(found.is_removed());
+}
+
+#[test]
+fn a_removed_client_that_pairs_again_is_listed_and_still_revoked() {
+    let (storage, account) = storage_with_account();
+    let key = Keys::generate().public_key();
+    let client = storage
+        .upsert_client(account.id, &key, None)
+        .expect("client inserts");
+    storage.remove_client(client.id).expect("client removes");
+
+    let again = storage
+        .upsert_client(account.id, &key, Some("jumble.social"))
+        .expect("client pairs again");
+
+    // Back on the list, so the refusals have something to explain them.
+    assert!(!again.is_removed());
+    assert!(again.is_revoked());
+    assert_eq!(storage.clients(account.id).expect("clients load").len(), 1);
+}
+
+#[test]
+fn removing_a_client_that_is_not_there_is_an_error() {
+    let (storage, _account) = storage_with_account();
+    assert!(storage.remove_client(ClientId::new(9999)).is_err());
 }
 
 #[test]

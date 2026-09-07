@@ -391,6 +391,18 @@ async function refreshClients() {
 
       card.append(rules, revoke);
     }
+
+    // Offered on every row, revoked ones included: a revoked client otherwise
+    // has no action at all and sits in the list forever. Removing revokes on
+    // the way out, so it is never the softer choice of the two.
+    const remove = el("button", "danger", "Remove");
+    arm(remove, "Remove", async () => {
+      await call("remove_client", { client: client.id });
+      await refreshClients();
+      await refreshRules();
+    });
+    card.append(remove);
+
     list.append(card);
   }
 

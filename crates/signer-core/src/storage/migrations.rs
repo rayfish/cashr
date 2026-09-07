@@ -83,6 +83,12 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE pairings ADD COLUMN client_name TEXT;
     "#,
+    // v3: removing a client takes it off the list without dropping the row.
+    // The row is what carries the revocation, and a revocation that a delete
+    // could erase would be a revocation the user cannot rely on.
+    r#"
+    ALTER TABLE clients ADD COLUMN removed_at INTEGER;
+    "#,
 ];
 
 pub fn apply(conn: &Connection) -> Result<()> {

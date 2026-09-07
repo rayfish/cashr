@@ -203,6 +203,16 @@ pub fn revoke_client(state: State<'_, AppState>, client: i64) -> CommandResult<(
         .map_err(fail)
 }
 
+/// Revoke a client and take it off the list, rules and all. Strictly stronger
+/// than revoking: the access goes the same way, and the record goes too.
+#[tauri::command]
+pub fn remove_client(state: State<'_, AppState>, client: i64) -> CommandResult<()> {
+    state
+        .storage
+        .remove_client(ClientId::new(client))
+        .map_err(fail)
+}
+
 #[tauri::command]
 pub fn rules(state: State<'_, AppState>, client: i64) -> CommandResult<Vec<RuleView>> {
     let policy = state
