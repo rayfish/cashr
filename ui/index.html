@@ -13,6 +13,14 @@
         <select id="account-picker" class="picker" title="Active account"></select>
       </span>
       <button id="lock-toggle" class="icon" title="Unlock">Unlock</button>
+      <button id="settings-toggle" class="icon" title="Settings" aria-pressed="false">
+        <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M6.94 1h2.12l.3 1.66a5 5 0 0 1 1.2.7l1.58-.6 1.06 1.84-1.28 1.08a5 5 0 0 1 0 1.4l1.28 1.08-1.06 1.84-1.58-.6a5 5 0 0 1-1.2.7L9.06 15H6.94l-.3-1.66a5 5 0 0 1-1.2-.7l-1.58.6-1.06-1.84 1.28-1.08a5 5 0 0 1 0-1.4L2.8 7.84 3.86 6l1.58.6a5 5 0 0 1 1.2-.7L6.94 1Zm1.06 4.9a2.1 2.1 0 1 0 0 4.2 2.1 2.1 0 0 0 0-4.2Z"
+          />
+        </svg>
+      </button>
       <button id="pin-toggle" class="icon" title="Keep the window open" aria-pressed="false">
         Pin
       </button>
@@ -112,12 +120,6 @@
             key file. It never goes in the database.
           </p>
         </div>
-
-        <h2>Unlocking</h2>
-        <p id="touch-id-state" class="hint"></p>
-        <button id="forget-touch-id" class="danger" hidden>
-          Stop unlocking with Touch ID
-        </button>
       </section>
 
       <section id="tab-clients" class="panel">
@@ -132,6 +134,14 @@
       <section id="tab-activity" class="panel">
         <div id="activity-list" class="list"></div>
         <button id="activity-more" class="ghost wide" hidden>Load more</button>
+      </section>
+
+      <section id="tab-settings" class="panel">
+        <h2>Unlocking</h2>
+        <p id="touch-id-state" class="hint"></p>
+        <button id="forget-touch-id" class="danger" hidden>
+          Stop unlocking with Touch ID
+        </button>
       </section>
     </main>
 

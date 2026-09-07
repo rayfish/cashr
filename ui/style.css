@@ -317,6 +317,14 @@ button.icon[aria-pressed="true"] {
   color: var(--accent);
 }
 
+/* An SVG icon sitting in a row of text ones. `display: block` keeps it off
+   the text baseline, which would otherwise leave it a pixel low. */
+.glyph {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
 button.plus {
   font-size: 16px;
   line-height: 1;

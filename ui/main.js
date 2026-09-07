@@ -11,6 +11,9 @@ const state = {
   needsMigration: false,
   hasKeychainCopies: false,
   hasTouchId: false,
+  tab: "home",
+  // Where the gear goes back to.
+  lastTab: "home",
   pending: 0,
   health: [],
   pinned: false,
@@ -641,13 +644,30 @@ async function refreshActivity(append = false) {
 // ------------------------------------------------------------------- wiring
 
 function selectTab(name) {
+  state.tab = name;
   for (const tab of document.querySelectorAll(".tab")) {
     tab.classList.toggle("is-active", tab.dataset.tab === name);
   }
   for (const panel of document.querySelectorAll(".panel")) {
     panel.classList.toggle("is-active", panel.id === `tab-${name}`);
   }
+  // Settings is reached by the gear, so no tab lights up while it is open and
+  // the gear has to say where you are instead.
+  $("settings-toggle").setAttribute("aria-pressed", String(name === "settings"));
   $("scroll").scrollTop = 0;
+}
+
+/// The gear is a toggle, not a fifth tab.
+///
+/// Settings is somewhere you go and come back from, so closing it returns to
+/// the tab you were reading rather than to whichever one is first.
+function toggleSettings() {
+  if (state.tab === "settings") {
+    selectTab(state.lastTab);
+    return;
+  }
+  state.lastTab = state.tab;
+  selectTab("settings");
 }
 
 async function refreshAll() {
@@ -663,6 +683,8 @@ function wire() {
   for (const tab of document.querySelectorAll(".tab")) {
     tab.onclick = () => selectTab(tab.dataset.tab);
   }
+
+  $("settings-toggle").onclick = () => toggleSettings();
 
   $("account-picker").onchange = async (event) => {
     state.account = Number(event.target.value);
