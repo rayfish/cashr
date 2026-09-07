@@ -169,6 +169,7 @@ pub struct PairingView {
 #[derive(Debug, Serialize)]
 pub struct StatusView {
     pub unlocked: bool,
+    pub unlocked_accounts: Vec<i64>,
     pub accounts: Vec<AccountView>,
     pub pending: usize,
     /// An account still has its keys only in the Keychain, so the passphrase

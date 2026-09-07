@@ -37,6 +37,21 @@ function app(scan = async () => [], pair = async () => ({ client_name: 'Test cli
   return { context, calls, elements, events, get: id => context.document.getElementById(id) };
 }
 
+test('a newly selected locked account stays visibly locked while another account is unlocked', () => {
+  const view = app();
+  vm.runInContext('state.accounts = [{ id: 1, label: "Personal", npub: "npub1" }, { id: 2, label: "New", npub: "npub2" }]; state.account = 2; state.unlocked = true; state.unlockedAccounts = [1]', view.context);
+  view.context.renderAccountPicker();
+  view.context.renderAccountCard();
+  view.context.renderUnlock();
+  assert.equal(view.get('account-picker').children[0].textContent, 'Personal · Unlocked');
+  assert.equal(view.get('account-picker').children[1].textContent, 'New · Locked');
+  assert.equal(view.get('account-card').children[0].children[1].textContent, 'Locked');
+  assert.equal(view.get('unlock').hidden, false);
+  vm.runInContext('state.unlockedAccounts = [1, 2]', view.context);
+  view.context.renderUnlock();
+  assert.equal(view.get('unlock').hidden, true);
+});
+
 test('recognizes pairing, wallet, payment and secret codes without payment actions', () => {
   const { context } = app();
   const describe = context.ByrgiQR.describe;

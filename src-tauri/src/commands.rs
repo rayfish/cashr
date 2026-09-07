@@ -43,6 +43,11 @@ pub async fn status(state: State<'_, AppState>) -> CommandResult<StatusView> {
 
     Ok(StatusView {
         unlocked,
+        unlocked_accounts: accounts
+            .iter()
+            .filter(|account| state.session.vault().holds(account.id))
+            .map(|account| account.id.get())
+            .collect(),
         accounts: accounts.iter().map(AccountView::from).collect(),
         pending: state.approver.pending_count(),
         needs_migration: state.needs_migration(),

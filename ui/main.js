@@ -8,6 +8,7 @@ const state = {
   client: null,
   activityCursor: null,
   unlocked: false,
+  unlockedAccounts: [],
   needsMigration: false,
   hasKeychainCopies: false,
   hasTouchId: false,
@@ -225,6 +226,7 @@ async function answer(id, allow, remember) {
 async function refreshStatus() {
   const status = await call("status");
   state.unlocked = status.unlocked;
+  state.unlockedAccounts = status.unlocked_accounts ?? [];
   state.accounts = status.accounts;
   state.needsMigration = status.needs_migration;
   state.hasKeychainCopies = status.has_keychain_copies;
@@ -236,12 +238,13 @@ async function refreshStatus() {
       null;
   }
 
-  $("lock-dot").className = `dot ${state.unlocked ? "is-up" : "is-down"}`;
+  const selectedUnlocked = currentAccount() ? state.unlockedAccounts.includes(state.account) : state.unlocked;
+  $("lock-dot").className = `dot ${selectedUnlocked ? "is-up" : "is-down"}`;
   const toggle = $("lock-toggle");
-  toggle.textContent = state.unlocked ? "Lock" : "Unlock";
-  toggle.title = state.unlocked
-    ? "Forget the keys until the next unlock"
-    : "Decrypt the keys with your passphrase";
+  toggle.textContent = selectedUnlocked ? "Lock" : "Unlock";
+  toggle.title = selectedUnlocked
+    ? "Lock all accounts"
+    : "Unlock all accounts with your passphrase";
 
   renderUnlock();
   renderAccountPicker();
@@ -258,7 +261,7 @@ async function refreshStatus() {
 /// twice, and the other cannot be got wrong at all.
 function renderUnlock() {
   const panel = $("unlock");
-  panel.hidden = state.unlocked;
+  panel.hidden = currentAccount() ? state.unlockedAccounts.includes(state.account) : state.unlocked;
   $("unlock-error").hidden = true;
 
   const fresh = state.accounts.length === 0;
@@ -381,7 +384,7 @@ function renderAccountPicker() {
   }
   picker.disabled = false;
   for (const account of state.accounts) {
-    const option = el("option", null, account.label);
+    const option = el("option", null, `${account.label} · ${state.unlockedAccounts.includes(account.id) ? "Unlocked" : "Locked"}`);
     option.value = String(account.id);
     picker.append(option);
   }
@@ -413,8 +416,8 @@ function renderAccountCard() {
     el("span", "grow title", account.label),
     el(
       "span",
-      `pill ${state.unlocked ? "is-allow" : ""}`,
-      state.unlocked ? "unlocked" : "locked",
+      `pill ${state.unlockedAccounts.includes(account.id) ? "is-allow" : ""}`,
+      state.unlockedAccounts.includes(account.id) ? "Unlocked" : "Locked",
     ),
   );
 
@@ -439,6 +442,7 @@ function renderAccountList() {
     const card = el("div", "card");
     const grow = el("div", "grow");
     grow.append(el("div", null, account.label), el("div", "mono", account.npub));
+    grow.append(el("span", `pill ${state.unlockedAccounts.includes(account.id) ? "is-allow" : ""}`, state.unlockedAccounts.includes(account.id) ? "Unlocked" : "Locked"));
     card.append(grow);
 
     if (account.is_default) {
@@ -725,7 +729,8 @@ async function saveAccount(importing) {
   button.textContent = importing ? "Importing…" : "Creating…";
   syncAccountForm();
   try {
-    await call(importing ? "import_account" : "create_account", importing ? { label, secret } : { label });
+    const account = await call(importing ? "import_account" : "create_account", importing ? { label, secret } : { label });
+    state.account = account.id;
     showAccountForm(false);
     await refreshAll();
   } catch {
@@ -941,7 +946,7 @@ function wire() {
   };
 
   $("lock-toggle").onclick = async () => {
-    if (state.unlocked) {
+    if (currentAccount() ? state.unlockedAccounts.includes(state.account) : state.unlocked) {
       await call("lock");
       await refreshAll();
       return;
