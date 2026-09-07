@@ -155,6 +155,28 @@ pub const CATEGORY: &str = "SIGN_REQUEST";
 pub const ACTION_APPROVE: &str = "APPROVE";
 pub const ACTION_REJECT: &str = "REJECT";
 
+/// Identifier of the "the signer is locked" notice.
+///
+/// Fixed rather than one per request: several requests arriving while locked
+/// are one piece of news, and posting under the same identifier replaces the
+/// notice instead of stacking copies of it.
+const LOCKED: &str = "UNLOCK_NEEDED";
+
+/// Say that a request arrived and the keys are not loaded.
+///
+/// No Approve or Reject on this one. Nothing can be decided while the vault is
+/// locked, and offering a button that cannot be honoured is worse than saying
+/// plainly what has to happen first. The request itself is held by the session
+/// and answered after the unlock.
+pub fn notify_locked(account_label: &str) {
+    platform::post_locked(account_label);
+}
+
+/// Take the notice back, once it has stopped being true.
+pub fn clear_locked() {
+    platform::clear_locked();
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     use std::sync::OnceLock;
@@ -173,7 +195,7 @@ mod platform {
     use signer_core::approval::{ApprovalDecision, ApprovalRequest};
     use std::sync::Arc;
 
-    use super::{NotificationApprover, RequestId, ACTION_APPROVE, ACTION_REJECT, CATEGORY};
+    use super::{NotificationApprover, RequestId, ACTION_APPROVE, ACTION_REJECT, CATEGORY, LOCKED};
 
     static APPROVER: OnceLock<Arc<NotificationApprover>> = OnceLock::new();
     static DELEGATE: OnceLock<Retained<ResponseHandler>> = OnceLock::new();
@@ -304,6 +326,38 @@ mod platform {
         Ok(())
     }
 
+    pub(super) fn post_locked(account_label: &str) {
+        if APPROVER.get().is_none() {
+            return;
+        }
+
+        let content = UNMutableNotificationContent::new();
+        content.setTitle(&NSString::from_str("Byrgi is locked"));
+        content.setBody(&NSString::from_str(&format!(
+            "A request for {account_label} is waiting. Unlock to answer it."
+        )));
+
+        let notification = UNNotificationRequest::requestWithIdentifier_content_trigger(
+            &NSString::from_str(LOCKED),
+            &content,
+            None,
+        );
+
+        UNUserNotificationCenter::currentNotificationCenter()
+            .addNotificationRequest_withCompletionHandler(&notification, None);
+    }
+
+    pub(super) fn clear_locked() {
+        if APPROVER.get().is_none() {
+            return;
+        }
+
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        let identifiers = NSArray::from_retained_slice(&[NSString::from_str(LOCKED)]);
+        center.removeDeliveredNotificationsWithIdentifiers(&identifiers);
+        center.removePendingNotificationRequestsWithIdentifiers(&identifiers);
+    }
+
     /// Pull a notification back once its request is answered or expired, so
     /// Notification Center does not keep offering a decision that goes
     /// nowhere.
@@ -351,6 +405,10 @@ mod platform {
     pub(super) fn post(_id: RequestId, _request: &ApprovalRequest) -> Result<(), String> {
         Ok(())
     }
+
+    pub(super) fn post_locked(_account_label: &str) {}
+
+    pub(super) fn clear_locked() {}
 
     pub(super) fn withdraw(_id: RequestId) {}
 }

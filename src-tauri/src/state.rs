@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use macos_native::notifications::NotificationApprover;
+use macos_native::notifications::{self, NotificationApprover};
 use macos_native::KeychainKeyStore;
 use nostr::key::Keys;
 use nostr::types::RelayUrl;
@@ -30,15 +30,31 @@ pub const DEFAULT_RELAYS: &[&str] = &[
     "wss://nos.lol",
 ];
 
-/// Forwards core events to the window as Tauri events.
+/// Forwards core events to the window as Tauri events, and to Notification
+/// Center where the user needs to know without the window being open.
 struct WindowNotifier {
     app: AppHandle,
+    storage: Arc<Storage>,
+}
+
+impl WindowNotifier {
+    /// The account's label, falling back to its id. A notification naming a
+    /// number is worth more than no notification.
+    fn label(&self, account: AccountId) -> String {
+        self.storage
+            .account(account)
+            .map(|account| account.label)
+            .unwrap_or_else(|_| format!("account {account}"))
+    }
 }
 
 impl Notifier for WindowNotifier {
     fn notify(&self, event: SignerEvent) {
         let (name, payload) = match event {
-            SignerEvent::Unlocked => ("signer://unlocked", serde_json::Value::Null),
+            SignerEvent::Unlocked => {
+                notifications::clear_locked();
+                ("signer://unlocked", serde_json::Value::Null)
+            }
             SignerEvent::Locked => ("signer://locked", serde_json::Value::Null),
             SignerEvent::RelayStatus {
                 account,
@@ -58,10 +74,16 @@ impl Notifier for WindowNotifier {
                 "signer://request-handled",
                 serde_json::json!({ "account": account.get(), "client": client.get() }),
             ),
-            SignerEvent::UnlockNeeded { account } => (
-                "signer://unlock-needed",
-                serde_json::json!({ "account": account.get() }),
-            ),
+            SignerEvent::UnlockNeeded { account } => {
+                // The client is waiting and the window is probably closed, so
+                // this has to leave the app to be seen at all. The request is
+                // held by the session and answered once the keys are loaded.
+                notifications::notify_locked(&self.label(account));
+                (
+                    "signer://unlock-needed",
+                    serde_json::json!({ "account": account.get() }),
+                )
+            }
         };
 
         if let Err(error) = self.app.emit(name, payload) {
@@ -87,14 +109,17 @@ impl AppState {
 
         let keystore = Arc::new(KeychainKeyStore::new(bundle_id));
         let approver = NotificationApprover::new();
-        macos_native::notifications::install(approver.clone());
+        notifications::install(approver.clone());
 
         let session = Arc::new(Session::new(SessionParts {
             storage: Arc::clone(&storage),
             vault: Arc::new(Vault::new()),
             keystore: keystore.clone(),
             approver: approver.clone(),
-            notifier: Arc::new(WindowNotifier { app: app.clone() }),
+            notifier: Arc::new(WindowNotifier {
+                app: app.clone(),
+                storage: Arc::clone(&storage),
+            }),
             config: SessionConfig::default(),
         }));
 
