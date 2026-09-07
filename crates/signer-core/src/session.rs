@@ -23,6 +23,7 @@ use crate::error::{Result, SignerError};
 use crate::keystore::KeyStore;
 use crate::pairing::random_hex;
 use crate::policy::{Decision, Outcome, Scope};
+use crate::request;
 use crate::storage::{ActivityOutcome, ActivitySource, NewActivity, Storage};
 use crate::vault::Vault;
 use crate::AsyncMutex;
@@ -254,7 +255,21 @@ impl Session {
         method: NostrConnectMethod,
         params: Vec<String>,
     ) -> Result<ResponseResult> {
-        let request = NostrConnectRequest::from_message(method, params)?;
+        // A request that will not parse is still a request that failed. The
+        // client sees its app do nothing; without a row here the window shows
+        // an idle signer and the two never meet.
+        let request = match request::parse(account, method, params) {
+            Ok(request) => request,
+            Err(error) => {
+                let client = self
+                    .storage
+                    .client_by_public_key(account.id, sender)
+                    .ok()
+                    .flatten();
+                self.record_refusal(account.id, client.map(|client| client.id), method, &error);
+                return Err(error);
+            }
+        };
 
         if let NostrConnectRequest::Connect {
             remote_signer_public_key,

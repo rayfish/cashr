@@ -187,10 +187,16 @@ impl Harness {
 
     /// Build the event a client would publish for `request`.
     fn envelope(&self, id: &str, request: &NostrConnectRequest) -> Event {
+        self.envelope_raw(id, request.method(), request.params())
+    }
+
+    /// The same, from params a client wrote itself rather than from this
+    /// crate's types. Clients in the wild do not use `NostrConnectRequest`.
+    fn envelope_raw(&self, id: &str, method: NostrConnectMethod, params: Vec<String>) -> Event {
         let message = NostrConnectMessage::Request {
             id: id.to_string(),
-            method: request.method(),
-            params: request.params(),
+            method,
+            params,
         };
         NostrConnectEventBuilder::new(self.account.signer_public_key, message)
             .finalize(&self.client)
@@ -202,6 +208,18 @@ impl Harness {
         let event = self.envelope(id, request);
         let response = self.session.handle(&self.account, event).await?;
         Some(self.open(&response, request.method()))
+    }
+
+    /// Send raw params, the way a client that speaks the wire format does.
+    async fn call_raw(
+        &self,
+        id: &str,
+        method: NostrConnectMethod,
+        params: Vec<String>,
+    ) -> Option<ClientResponse> {
+        let event = self.envelope_raw(id, method, params);
+        let response = self.session.handle(&self.account, event).await?;
+        Some(self.open(&response, method))
     }
 
     fn open(&self, event: &Event, method: NostrConnectMethod) -> ClientResponse {
@@ -643,6 +661,34 @@ async fn a_revoked_client_is_refused() {
     assert_eq!(harness.approver.calls(), 0);
 }
 
+#[tokio::test]
+async fn a_removed_client_is_refused_the_same_way_a_revoked_one_is() {
+    let harness = Harness::new(ScriptedApprover::new(ApprovalDecision::allow_once())).await;
+    harness.unlock().await;
+    harness.pair().await;
+
+    let client = harness
+        .storage
+        .clients(harness.account.id)
+        .expect("clients load")[0]
+        .clone();
+    harness
+        .storage
+        .remove_client(client.id)
+        .expect("client is removed");
+
+    let response = harness
+        .call(
+            "1",
+            &NostrConnectRequest::SignEvent(note(harness.account.identity_public_key)),
+        )
+        .await
+        .expect("request is answered");
+
+    assert_eq!(response.error(), Some("unauthorized"));
+    assert_eq!(harness.approver.calls(), 0);
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_unanswered_prompt_times_out_instead_of_hanging_the_client() {
     let harness = Harness::with_config(
@@ -896,4 +942,99 @@ async fn accepting_a_nostrconnect_uri_sends_the_ack_unprompted() {
         )
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn a_sign_event_template_without_a_pubkey_is_signed() {
+    // What clients actually send: NIP-46 names `{kind, content, tags,
+    // created_at}` and nothing else, because only the signer knows the pubkey.
+    let harness = Harness::new(ScriptedApprover::new(ApprovalDecision::allow_once())).await;
+    harness.unlock().await;
+    harness.pair().await;
+
+    let template = serde_json::json!({
+        "kind": 1,
+        "content": "hello",
+        "tags": [],
+        "created_at": 1_700_000_000u64,
+    })
+    .to_string();
+
+    let response = harness
+        .call_raw("1", NostrConnectMethod::SignEvent, vec![template])
+        .await
+        .expect("request is answered");
+
+    let ClientResponse::Ok {
+        result: ResponseResult::SignEvent(event),
+        ..
+    } = response
+    else {
+        panic!("sign_event was refused: {response:?}");
+    };
+    assert_eq!(event.pubkey, harness.account.identity_public_key);
+    assert_eq!(event.kind, Kind::TextNote);
+    assert_eq!(event.content, "hello");
+    event.verify().expect("the signed event verifies");
+}
+
+#[tokio::test]
+async fn the_signer_signs_its_own_id_not_the_client_s() {
+    // The id is the only thing the signature covers. Taking the client's would
+    // sign bytes nobody looked at, whatever the prompt said the request was.
+    let harness = Harness::new(ScriptedApprover::new(ApprovalDecision::allow_once())).await;
+    harness.unlock().await;
+    harness.pair().await;
+
+    let stranger = Keys::generate().public_key();
+    let template = serde_json::json!({
+        "id": "00".repeat(32),
+        "pubkey": stranger.to_hex(),
+        "kind": 1,
+        "content": "hello",
+        "tags": [],
+        "created_at": 1_700_000_000u64,
+    })
+    .to_string();
+
+    let response = harness
+        .call_raw("1", NostrConnectMethod::SignEvent, vec![template])
+        .await
+        .expect("request is answered");
+
+    let ClientResponse::Ok {
+        result: ResponseResult::SignEvent(event),
+        ..
+    } = response
+    else {
+        panic!("sign_event was refused: {response:?}");
+    };
+    assert_eq!(event.pubkey, harness.account.identity_public_key);
+    event.verify().expect("the signed event verifies");
+}
+
+#[tokio::test]
+async fn a_request_that_will_not_parse_is_recorded() {
+    let harness = Harness::new(ScriptedApprover::new(ApprovalDecision::allow_once())).await;
+    harness.unlock().await;
+    harness.pair().await;
+
+    let response = harness
+        .call_raw(
+            "1",
+            NostrConnectMethod::SignEvent,
+            vec!["not an event".to_string()],
+        )
+        .await
+        .expect("request is answered");
+
+    assert_eq!(response.error(), Some("invalid request"));
+
+    let entries = harness
+        .storage
+        .activity(harness.account.id, 10, None)
+        .expect("activity loads");
+    let latest = entries.first().expect("something was recorded");
+    assert_eq!(latest.method, NostrConnectMethod::SignEvent);
+    assert!(latest.client.is_some());
 }

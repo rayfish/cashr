@@ -16,6 +16,7 @@ pub mod keystore;
 pub mod kinds;
 pub mod pairing;
 pub mod policy;
+pub mod request;
 pub mod runner;
 pub mod session;
 pub mod storage;
