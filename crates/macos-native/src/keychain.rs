@@ -9,6 +9,9 @@
 //! is still bound to this app's code signature, which is what keeps other
 //! programs out of it. See `presence` for what that trade costs.
 
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use nostr::key::{Keys, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -66,16 +69,28 @@ impl KeychainKeyStore {
     /// not be public: nothing outside should be able to reach a key without
     /// going past the prompt.
     fn read(&self, handle: KeyHandle) -> Result<Keys, KeyStoreError> {
-        let stored = platform::read(&self.service, &Self::item_name(handle.account))?
-            .ok_or(KeyStoreError::NotFound(handle))?;
-        let hex = stored.role(handle.role);
-        if hex.is_empty() {
-            return Err(KeyStoreError::NotFound(handle));
-        }
-        let secret = SecretKey::from_hex(hex)
-            .map_err(|e| KeyStoreError::Backend(format!("stored key is unreadable: {e}")))?;
-        Ok(Keys::new(secret))
+        let stored = self.read_item(handle)?;
+        key_from(&stored, handle)
     }
+
+    /// The account's whole item. Every call is a separate `SecItemCopyMatching`
+    /// and therefore a separate Keychain access check, so callers that want
+    /// both roles read it once and take both out.
+    fn read_item(&self, handle: KeyHandle) -> Result<StoredKeys, KeyStoreError> {
+        platform::read(&self.service, &Self::item_name(handle.account))?
+            .ok_or(KeyStoreError::NotFound(handle))
+    }
+}
+
+/// Take one role's key out of the item both roles share.
+fn key_from(stored: &StoredKeys, handle: KeyHandle) -> Result<Keys, KeyStoreError> {
+    let hex = stored.role(handle.role);
+    if hex.is_empty() {
+        return Err(KeyStoreError::NotFound(handle));
+    }
+    let secret = SecretKey::from_hex(hex)
+        .map_err(|e| KeyStoreError::Backend(format!("stored key is unreadable: {e}")))?;
+    Ok(Keys::new(secret))
 }
 
 /// Completes the sentence macOS shows: "Byrgi is trying to ...".
@@ -100,13 +115,24 @@ impl KeyStore for KeychainKeyStore {
         platform::delete(&self.service, &Self::item_name(account))
     }
 
-    /// One prompt for every key, which is what unlocking the app is.
+    /// One presence prompt, and one Keychain read per account.
+    ///
+    /// The handles name a role each, but an account's two keys live in the
+    /// same item, so reading per handle asks the Keychain twice for the same
+    /// thing. Each of those reads is its own access check, and on a login
+    /// keychain item that means a second password dialog for the user, so the
+    /// item is read once and both keys come out of it.
     async fn load_many(&self, handles: &[KeyHandle]) -> Result<Vec<Keys>, KeyStoreError> {
         presence::require(UNLOCK_REASON).await?;
 
+        let mut items: HashMap<AccountId, StoredKeys> = HashMap::new();
         let mut keys = Vec::with_capacity(handles.len());
         for handle in handles {
-            keys.push(self.read(*handle)?);
+            let stored = match items.entry(handle.account) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(self.read_item(*handle)?),
+            };
+            keys.push(key_from(stored, *handle)?);
         }
         Ok(keys)
     }
