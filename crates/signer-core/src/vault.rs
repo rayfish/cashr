@@ -100,6 +100,17 @@ impl Vault {
         self.read().contains_key(&account)
     }
 
+    /// Domain-separated wallet seed; never exposes the Nostr secret itself.
+    pub fn cashu_seed(&self, account: AccountId) -> Result<[u8; 64]> {
+        use sha2::{Digest, Sha512};
+        self.with(account, Which::Identity, |keys| {
+            let mut hash = Sha512::new();
+            hash.update(b"byrgi/cashu/wallet-seed/v1\0");
+            hash.update(keys.secret_key().as_secret_bytes());
+            Ok(hash.finalize().into())
+        })
+    }
+
     pub fn identity_public_key(&self, account: AccountId) -> Result<PublicKey> {
         self.with(account, Which::Identity, |keys| Ok(keys.public_key()))
     }
@@ -241,6 +252,26 @@ mod tests {
     use nostr::nips::nip42::is_valid_auth_event;
 
     use super::*;
+
+    #[test]
+    fn wallet_seed_is_stable_separate_from_identity_and_unavailable_when_locked() {
+        let vault = Vault::new();
+        let account = AccountId::new(1);
+        let identity = Keys::generate();
+        vault.write().insert(
+            account,
+            AccountKeys {
+                identity: identity.clone(),
+                transport: Keys::generate(),
+            },
+        );
+        let seed = vault.cashu_seed(account).unwrap();
+        assert_eq!(seed, vault.cashu_seed(account).unwrap());
+        assert_ne!(&seed[..32], identity.secret_key().as_secret_bytes());
+        assert!(vault.cashu_seed(AccountId::new(2)).is_err());
+        vault.lock();
+        assert!(vault.cashu_seed(account).is_err());
+    }
 
     #[test]
     fn relay_auth_uses_transport_key_and_binds_relay_and_challenge() {

@@ -59,13 +59,14 @@ impl Storage {
             created_at,
             is_default: new.is_default,
             relays: new.relays,
+            lightning_address: None,
         })
     }
 
     pub fn accounts(&self) -> Result<Vec<Account>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, identity_public_key, signer_public_key, label, created_at, is_default
+            "SELECT id, identity_public_key, signer_public_key, label, created_at, is_default, lightning_address
              FROM accounts ORDER BY created_at",
         )?;
         let rows: Vec<Account> = stmt
@@ -86,7 +87,7 @@ impl Storage {
         let mut account = {
             let conn = self.conn();
             conn.query_row(
-                "SELECT id, identity_public_key, signer_public_key, label, created_at, is_default
+                "SELECT id, identity_public_key, signer_public_key, label, created_at, is_default, lightning_address
                  FROM accounts WHERE id = ?1",
                 params![id.get()],
                 row_to_account,
@@ -103,7 +104,7 @@ impl Storage {
         let found = {
             let conn = self.conn();
             conn.query_row(
-                "SELECT id, identity_public_key, signer_public_key, label, created_at, is_default
+                "SELECT id, identity_public_key, signer_public_key, label, created_at, is_default, lightning_address
                  FROM accounts WHERE signer_public_key = ?1",
                 params![signer_public_key.to_hex()],
                 row_to_account,
@@ -174,6 +175,46 @@ impl Storage {
         }
         Ok(())
     }
+
+    /// Save an address only; this does not verify its provider or publish a profile.
+    pub fn set_lightning_address(&self, id: AccountId, address: Option<&str>) -> Result<()> {
+        let address = address.map(str::trim).filter(|value| !value.is_empty());
+        if let Some(value) = address {
+            let (name, domain) = value.split_once('@').ok_or(SignerError::InvalidRequest(
+                "use a Lightning address such as alice@example.com",
+            ))?;
+            let valid_name = !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"-_.+".contains(&c));
+            let valid_domain = domain.len() <= 253
+                && domain.contains('.')
+                && domain.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+                });
+            if value.len() > 320 || !valid_name || !valid_domain {
+                return Err(SignerError::InvalidRequest("use a Lightning address with a lowercase username and a domain, such as alice@example.com"));
+            }
+        }
+        let normalized = address.map(|value| {
+            let (name, domain) = value.split_once('@').expect("validated address");
+            format!("{name}@{}", domain.to_ascii_lowercase())
+        });
+        let changed = self.conn().execute(
+            "UPDATE accounts SET lightning_address = ?1 WHERE id = ?2",
+            params![normalized, id.get()],
+        )?;
+        if changed == 0 {
+            return Err(SignerError::UnknownAccount);
+        }
+        Ok(())
+    }
 }
 
 fn row_to_account(row: &Row<'_>) -> rusqlite::Result<Account> {
@@ -199,5 +240,6 @@ fn row_to_account(row: &Row<'_>) -> rusqlite::Result<Account> {
         created_at: Timestamp::from_secs(created_at.max(0) as u64),
         is_default: row.get(5)?,
         relays: Vec::new(),
+        lightning_address: row.get(6)?,
     })
 }

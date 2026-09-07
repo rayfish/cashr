@@ -85,7 +85,11 @@ pub async fn forget_keychain(state: State<'_, AppState>) -> CommandResult<()> {
 }
 
 #[tauri::command]
-pub fn lock(state: State<'_, AppState>) -> CommandResult<()> {
+pub fn lock(
+    state: State<'_, AppState>,
+    wallet: State<'_, crate::wallet::WalletService>,
+) -> CommandResult<()> {
+    wallet.lock();
     state.lock();
     Ok(())
 }
@@ -110,7 +114,16 @@ pub async fn import_account(
 }
 
 #[tauri::command]
-pub async fn delete_account(state: State<'_, AppState>, account: i64) -> CommandResult<()> {
+pub async fn delete_account(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    wallet: State<'_, crate::wallet::WalletService>,
+    account: i64,
+) -> CommandResult<()> {
+    let _guard = wallet.gate.lock().await;
+    if crate::wallet::has_wallet(&app, &state, account).map_err(fail)? {
+        return Err("This account has a Cashu wallet. Keep its keys and wallet backup; account deletion is disabled to protect its funds.".into());
+    }
     state
         .delete_account(AccountId::new(account))
         .await
@@ -122,6 +135,18 @@ pub fn set_default_account(state: State<'_, AppState>, account: i64) -> CommandR
     state
         .storage
         .set_default_account(AccountId::new(account))
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn set_lightning_address(
+    state: State<'_, AppState>,
+    account: i64,
+    address: Option<String>,
+) -> CommandResult<()> {
+    state
+        .storage
+        .set_lightning_address(AccountId::new(account), address.as_deref())
         .map_err(fail)
 }
 

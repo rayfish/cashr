@@ -105,6 +105,14 @@ textarea,
   min-width: 0;
 }
 
+.wallet-balance { font-size: 28px; }
+#tab-wallet details.card { display: block; margin-top: 10px; }
+#tab-wallet form.stack, #wallet-invoice-box { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+#tab-wallet summary { cursor: pointer; font-weight: 600; }
+#tab-wallet textarea { min-height: 70px; width: 100%; overflow-wrap: anywhere; }
+#wallet-destination { overflow-wrap: anywhere; }
+#wallet-review { margin-top: 12px; border-color: var(--accent); }
+
 .grow {
   flex: 1;
   min-width: 0;

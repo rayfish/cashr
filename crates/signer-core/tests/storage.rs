@@ -47,6 +47,77 @@ fn account_round_trips_with_its_relays() {
 }
 
 #[test]
+fn lightning_addresses_are_validated_and_scoped_to_an_account() {
+    let (storage, first) = storage_with_account();
+    let second = storage
+        .insert_account(NewAccount {
+            identity_public_key: Keys::generate().public_key(),
+            signer_public_key: Keys::generate().public_key(),
+            label: "second".into(),
+            relays: vec![],
+            is_default: false,
+        })
+        .unwrap();
+    storage
+        .set_lightning_address(first.id, Some(" alice+tips@Example.COM "))
+        .unwrap();
+    assert_eq!(
+        storage
+            .account(first.id)
+            .unwrap()
+            .lightning_address
+            .as_deref(),
+        Some("alice+tips@example.com")
+    );
+    assert_eq!(storage.account(second.id).unwrap().lightning_address, None);
+    assert_eq!(
+        storage
+            .account_by_signer_key(&first.signer_public_key)
+            .unwrap()
+            .unwrap()
+            .lightning_address
+            .as_deref(),
+        Some("alice+tips@example.com")
+    );
+    for invalid in [
+        "Alice@example.com",
+        "alice",
+        "alice@@example.com",
+        "alice@example.com/path",
+        "alice@-example.com",
+        "alice@foo..com",
+        "alice@example.com:443",
+        "alice@example.com\nsecret",
+        "@example.com",
+    ] {
+        assert!(
+            storage
+                .set_lightning_address(first.id, Some(invalid))
+                .is_err(),
+            "accepted {invalid}"
+        );
+    }
+    assert_eq!(
+        storage
+            .account(first.id)
+            .unwrap()
+            .lightning_address
+            .as_deref(),
+        Some("alice+tips@example.com")
+    );
+    storage.set_lightning_address(first.id, None).unwrap();
+    assert!(storage
+        .accounts()
+        .unwrap()
+        .iter()
+        .all(|account| account.lightning_address.is_none()));
+    storage.delete_account(first.id).unwrap();
+    assert!(storage
+        .set_lightning_address(first.id, Some("alice@example.com"))
+        .is_err());
+}
+
+#[test]
 fn accounts_are_found_by_signer_key_not_identity_key() {
     let (storage, account) = storage_with_account();
 

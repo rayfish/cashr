@@ -82,6 +82,7 @@ mod tests {
             created_at: Timestamp::now(),
             is_default: true,
             relays: Vec::<RelayUrl>::new(),
+            lightning_address: None,
         }
     }
 

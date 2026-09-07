@@ -66,12 +66,83 @@
 
     <nav class="tabs" role="tablist">
       <button class="tab is-active" data-tab="home">Account</button>
+      <button class="tab" data-tab="wallet">Wallet</button>
       <button class="tab" data-tab="clients">Clients</button>
       <button class="tab" data-tab="rules">Rules</button>
       <button class="tab" data-tab="activity">Activity</button>
     </nav>
 
     <main id="scroll">
+      <section id="tab-wallet" class="panel" aria-labelledby="wallet-heading">
+        <div class="settings-heading"><h1 id="wallet-heading">Wallet</h1><button id="wallet-refresh">Refresh</button></div>
+        <p id="wallet-account" class="hint"></p>
+        <select id="wallet-picker" aria-label="Cashu wallet" hidden></select>
+        <div class="card stack">
+          <strong id="wallet-balance" class="wallet-balance">— sats</strong>
+          <span id="wallet-pending" class="hint"></span>
+          <p id="wallet-mint" class="hint">Mint: btc.aleafnd.org/cashu</p>
+          <button id="wallet-open" class="primary">Open wallet</button>
+        </div>
+        <p id="wallet-status" class="hint" role="status" aria-live="polite">Unlock your account to open its wallet.</p>
+        <details id="wallet-import-section" class="card stack"><summary>Import wallet</summary>
+          <form id="wallet-import-form" class="stack">
+            <label for="wallet-import-seed">Seed phrase (BIP-39)</label>
+            <input id="wallet-import-seed" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="12 or 24 words" required maxlength="512" />
+            <label for="wallet-import-mint">Original mint URL</label>
+            <input id="wallet-import-mint" type="url" value="https://btc.aleafnd.org/cashu" required maxlength="2048" />
+            <label for="wallet-import-passphrase">Recovery passphrase (optional)</label>
+            <input id="wallet-import-passphrase" type="password" autocomplete="off" maxlength="1024" />
+            <button type="submit">Import and recover</button>
+          </form>
+        </details>
+        <div id="wallet-actions" hidden>
+          <details class="card stack"><summary>Add funds</summary>
+            <form id="wallet-fund-form" class="stack">
+              <label for="wallet-fund-amount">Amount in sats</label>
+              <input id="wallet-fund-amount" type="number" min="1" max="10000" step="1" value="1000" required />
+              <button type="submit">Create funding invoice</button>
+            </form>
+            <div id="wallet-invoice-box" class="stack" hidden>
+              <textarea id="wallet-invoice" readonly aria-label="Funding invoice"></textarea>
+              <button id="wallet-copy-invoice">Copy invoice</button>
+              <p class="hint">Pay this invoice with another Lightning wallet, then Refresh to claim your Cashu balance.</p>
+            </div>
+          </details>
+          <details class="card stack"><summary>Receive Cashu</summary>
+            <form id="wallet-receive-form" class="stack">
+              <label for="wallet-token">Cashu token from this mint</label>
+              <textarea id="wallet-token" placeholder="cashuB…" required spellcheck="false"></textarea>
+              <button type="submit">Receive token</button>
+            </form>
+          </details>
+          <details class="card stack" id="wallet-pay-section"><summary>Pay Lightning invoice</summary>
+            <form id="wallet-pay-form" class="stack">
+              <label for="wallet-request">Invoice</label>
+              <textarea id="wallet-request" placeholder="lnbc…" required spellcheck="false"></textarea>
+              <button type="submit">Review payment</button>
+            </form>
+          </details>
+          <details class="card stack"><summary>Zap a Nostr account or note</summary>
+            <form id="wallet-zap-form" class="stack">
+              <label for="wallet-zap-address">Recipient’s Lightning address</label><input id="wallet-zap-address" placeholder="alice@example.com" required />
+              <label for="wallet-zap-recipient">Recipient’s Nostr public key</label><input id="wallet-zap-recipient" placeholder="npub1…" required />
+              <label for="wallet-zap-amount">Amount in sats</label><input id="wallet-zap-amount" type="number" min="1" max="10000" step="1" value="21" required />
+              <label for="wallet-zap-note">Note event ID (optional, hex)</label><input id="wallet-zap-note" />
+              <p class="hint">Signs a zap request and asks the recipient’s provider for an invoice. You review and approve the payment next.</p>
+              <button type="submit">Prepare zap</button>
+            </form>
+          </details>
+          <div id="wallet-review" class="card stack" hidden>
+            <h2>Confirm payment</h2><p id="wallet-destination" class="mono"></p>
+            <p id="wallet-review-amount"></p><p id="wallet-review-fee" class="hint"></p>
+            <div class="row"><button id="wallet-confirm" class="primary">Pay</button><button id="wallet-cancel">Cancel</button></div>
+          </div>
+          <h2>Recent transactions</h2><div id="wallet-history" class="list"></div>
+          <details class="card stack"><summary>Backup and recovery</summary>
+            <button id="wallet-restore">Recover tokens from mint</button>
+          </details>
+        </div>
+      </section>
       <section id="tab-scan" class="panel" aria-labelledby="scan-heading">
         <div class="settings-heading">
           <h1 id="scan-heading">Scan QR code</h1>
@@ -127,7 +198,6 @@
       <section id="tab-settings" class="panel">
         <div class="settings-heading">
           <h1>Settings</h1>
-          <button id="settings-done" class="ghost">Done</button>
         </div>
         <section class="settings-section" aria-labelledby="accounts-heading">
           <div class="settings-heading">
@@ -160,6 +230,22 @@
             <button id="account-cancel" class="ghost start">Cancel</button>
           </div>
         </section>
+        <section class="settings-section" aria-labelledby="lightning-heading">
+          <h2 id="lightning-heading">Lightning address</h2>
+          <p id="lightning-account" class="hint"></p>
+          <form id="lightning-form" class="card stack">
+            <label for="lightning-address">Use an existing Lightning address</label>
+            <input id="lightning-address" type="text" placeholder="alice@example.com" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="320" aria-describedby="lightning-destination lightning-local" />
+            <p id="lightning-destination" class="hint">Payments to this address go to your existing provider. Its balance and spending access stay with that provider.</p>
+            <p id="lightning-local" class="hint">Saved on this Mac for the selected account. The provider is not checked and your Nostr profile is not updated.</p>
+            <div class="row">
+              <button id="lightning-save" type="submit" class="primary">Save address</button>
+              <button id="lightning-remove" type="button" class="ghost" hidden>Remove</button>
+            </div>
+            <p id="lightning-status" class="hint" role="status" aria-live="polite"></p>
+          </form>
+          <p class="hint">Creating an address on our domain will be available when the receiving service is set up.</p>
+        </section>
         <section class="settings-section" aria-labelledby="security-heading">
           <h2 id="security-heading">Security</h2>
           <div class="card stack">
@@ -184,6 +270,7 @@
 
     <div id="toast" class="toast" hidden></div>
     <script src="qr.js"></script>
+    <script src="wallet.js"></script>
     <script src="main.js"></script>
   </body>
 </html>

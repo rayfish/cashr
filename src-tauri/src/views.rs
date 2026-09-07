@@ -16,6 +16,7 @@ use signer_core::transport::RelayHealth;
 
 #[derive(Debug, Serialize)]
 pub struct AccountView {
+    pub lightning_address: Option<String>,
     pub id: i64,
     pub label: String,
     /// The npub, bech32 encoded for display.
@@ -27,6 +28,7 @@ pub struct AccountView {
 impl From<&Account> for AccountView {
     fn from(account: &Account) -> Self {
         Self {
+            lightning_address: account.lightning_address.clone(),
             id: account.id.get(),
             label: account.label.clone(),
             npub: account

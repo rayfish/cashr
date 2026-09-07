@@ -37,6 +37,23 @@ function app(scan = async () => [], pair = async () => ({ client_name: 'Test cli
   return { context, calls, elements, events, get: id => context.document.getElementById(id) };
 }
 
+test('Lightning address drafts survive refreshes and switch with the selected account', () => {
+  const view = app();
+  vm.runInContext('state.accounts = [{ id: 1, label: "Personal", lightning_address: "alice@example.com" }, { id: 2, label: "Work", lightning_address: null }]; state.account = 1', view.context);
+  view.context.wire();
+  view.context.renderLightningAddress();
+  assert.equal(view.get('lightning-address').value, 'alice@example.com');
+  view.get('lightning-address').value = 'new@example.com';
+  view.get('lightning-address').oninput();
+  view.context.renderLightningAddress();
+  assert.equal(view.get('lightning-address').value, 'new@example.com');
+  vm.runInContext('state.account = 2', view.context);
+  view.context.renderLightningAddress();
+  assert.equal(view.get('lightning-address').value, '');
+  assert.equal(view.get('lightning-account').textContent, 'For Work');
+  assert.equal(view.get('lightning-remove').hidden, true);
+});
+
 test('a newly selected locked account stays visibly locked while another account is unlocked', () => {
   const view = app();
   vm.runInContext('state.accounts = [{ id: 1, label: "Personal", npub: "npub1" }, { id: 2, label: "New", npub: "npub2" }]; state.account = 2; state.unlocked = true; state.unlockedAccounts = [1]', view.context);

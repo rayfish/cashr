@@ -89,6 +89,10 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE clients ADD COLUMN removed_at INTEGER;
     "#,
+    // v4: an existing receiving address, saved locally for each identity.
+    r#"
+    ALTER TABLE accounts ADD COLUMN lightning_address TEXT;
+    "#,
 ];
 
 pub fn apply(conn: &Connection) -> Result<()> {

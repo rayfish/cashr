@@ -1,7 +1,7 @@
 # Byrgi
 
-A macOS menu bar app that signs Nostr events without sharing your private keys
-with clients. *Byrgi* is Icelandic for a shelter or enclosed place—a bunker.
+A macOS menu bar Nostr signer and Cashu wallet. *Byrgi* is Icelandic for a
+shelter or enclosed place—a bunker.
 
 - Create or import accounts in **Settings**.
 - Pair clients using `bunker://` or `nostrconnect://` links.
@@ -10,6 +10,8 @@ with clients. *Byrgi* is Icelandic for a shelter or enclosed place—a bunker.
 - Approve requests in the app or through notifications, with optional saved
   permissions per client, method, and event kind.
 - Manage connected clients, relays, and request history.
+- Use **Wallet** to fund a Cashu balance, receive tokens, pay Lightning invoices,
+  and zap a Nostr account or note. Payments have a separate amount/fee approval.
 
 ## NIP support
 
@@ -22,6 +24,7 @@ with clients. *Byrgi* is Icelandic for a shelter or enclosed place—a bunker.
 | NIP-44 | Encrypt/decrypt methods and encryption for NIP-46 messages. |
 | NIP-46 | Remote signing, with both `bunker://` and `nostrconnect://` pairing. |
 | NIP-49 | Passphrase-encrypted `ncryptsec` storage for account keys. |
+| NIP-57 | Create signed zap requests, validate invoice amount/description hash, and pay through Cashu. Receipts are published by the recipient’s provider. |
 
 Supported NIP-46 methods: `connect`, `get_public_key`, `sign_event`, `ping`,
 `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, and `nip44_decrypt`.
@@ -49,11 +52,34 @@ a Developer ID certificate and notarization; `APPLE_SIGNING_IDENTITY` overrides
 the local signing identity.
 
 Run `just check` for formatting, linting, and tests, or `just --list` for all tasks.
-Scanner UI tests run with `node --test ui/tests/qr.test.cjs`.
+UI tests run with `node --test ui/tests/*.test.cjs`.
 
 Opening **Scan QR** requests Screen Recording permission if needed.
-Clipboard image scanning does not need screen access. Lightning and Cashu QR
-codes can be read and copied; payments and wallet connections are not implemented.
+Clipboard image scanning does not need screen access. Scanned Lightning invoices
+can be opened in Wallet for review.
+
+## Wallet
+
+The default wallet uses `https://btc.aleafnd.org/cashu`, whose advertised deposit/payment
+limit is 10,000 sats. The mint holds the bitcoin backing your Cashu tokens.
+Pay funding invoices from another wallet, then **Refresh** to claim tokens.
+Refresh also reconciles pending payments after interruptions; a timeout does
+not mean a payment failed.
+
+Wallet databases are encrypted with SQLCipher under the app’s `wallets` folder.
+Back up the entire application data directory and retain your passphrase.
+Original wallet seeds are derived from each Nostr identity. **Import wallet**
+accepts a BIP-39 seed phrase, original mint URL, and optional BIP-39 passphrase
+for wallets using Cashu's standard NUT-13 derivation. Imported wallets stay
+separate and can be selected using the wallet picker. Recovery requires the
+original mint to be available and support restoration; repeat the import for
+each mint used by the source wallet. Backup-file and NIP-60 imports are not supported.
+Seed recovery does not replace a database backup or recover every pending
+operation. Account deletion is blocked once it has a wallet.
+
+Nostr Wallet Connect (NIP-47), NIP-60 wallet synchronization, and hosted Lightning
+address registration are not implemented yet. The existing-address setting only
+saves a receiving address locally.
 
 ## Key storage
 

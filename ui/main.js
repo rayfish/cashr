@@ -9,6 +9,9 @@ const state = {
   activityCursor: null,
   unlocked: false,
   unlockedAccounts: [],
+  lightningAccount: null,
+  lightningDirty: false,
+  savingLightning: false,
   needsMigration: false,
   hasKeychainCopies: false,
   hasTouchId: false,
@@ -250,6 +253,8 @@ async function refreshStatus() {
   renderAccountPicker();
   renderAccountCard();
   renderAccountList();
+  renderLightningAddress();
+  window.WalletUI?.sync(currentAccount(), state.unlockedAccounts.includes(state.account));
   renderRelays();
 }
 
@@ -428,6 +433,53 @@ function renderAccountCard() {
   copyKey.onclick = () => copy(account.npub, copyKey);
 
   card.append(head, key, copyKey);
+}
+
+function renderLightningAddress() {
+  const account = currentAccount();
+  const changedAccount = state.lightningAccount !== (account?.id ?? null);
+  if (changedAccount) {
+    state.lightningAccount = account?.id ?? null;
+    state.lightningDirty = false;
+    $("lightning-status").textContent = "";
+  }
+  if (changedAccount || !state.lightningDirty) {
+    $("lightning-address").value = account?.lightning_address ?? "";
+  }
+  $("lightning-account").textContent = account ? `For ${account.label}` : "Add an account first.";
+  $("lightning-destination").textContent = account?.lightning_address
+    ? `Payments to ${account.lightning_address} go to its existing provider. Its balance and spending access stay with that provider.`
+    : "Payments to this address go to your existing provider. Its balance and spending access stay with that provider.";
+  $("lightning-address").disabled = !account || state.savingLightning;
+  $("lightning-save").disabled = !account || state.savingLightning;
+  $("lightning-remove").disabled = state.savingLightning;
+  $("lightning-remove").hidden = !account?.lightning_address;
+}
+
+async function saveLightningAddress(remove = false) {
+  const account = currentAccount();
+  if (!account || state.savingLightning) return;
+  const address = remove ? null : $("lightning-address").value.trim();
+  if (!remove && !address) {
+    $("lightning-status").textContent = "Enter a Lightning address first.";
+    $("lightning-address").focus();
+    return;
+  }
+  state.savingLightning = true;
+  // Keep an unsaved value intact while status refreshes are in flight.
+  state.lightningDirty = true;
+  renderLightningAddress();
+  try {
+    await call("set_lightning_address", { account: account.id, address });
+    if (state.account === account.id) state.lightningDirty = false;
+    await refreshStatus();
+    if (state.account === account.id) $("lightning-status").textContent = remove ? "Address removed from Byrgi. Your provider is unchanged." : "Address saved locally. Your existing provider receives payments.";
+  } catch {
+    if (state.account === account.id) $("lightning-status").textContent = "Could not save the address. Check its format and try again.";
+  } finally {
+    state.savingLightning = false;
+    renderLightningAddress();
+  }
 }
 
 function renderAccountList() {
@@ -830,6 +882,17 @@ function renderScannedCodes(codes) {
       if (list.children.length === 1) connect.focus();
       continue;
     }
+    if (window.WalletUI && /^(lightning:)?lnbc/i.test(raw.trim())) {
+      const review = el("button", "primary", "Open in Wallet");
+      review.onclick = () => {
+        clearScan();
+        selectTab("wallet");
+        window.WalletUI.scan(raw.trim());
+      };
+      card.append(title, hint, review);
+      list.append(card);
+      continue;
+    }
     const content = el("textarea", "scan-content mono");
     content.readOnly = true;
     content.spellcheck = false;
@@ -922,6 +985,16 @@ async function refreshAll() {
 }
 
 function wire() {
+  window.WalletUI?.init(call);
+  $("lightning-form").onsubmit = (event) => {
+    event.preventDefault();
+    saveLightningAddress();
+  };
+  $("lightning-address").oninput = () => {
+    state.lightningDirty = true;
+    $("lightning-status").textContent = "";
+  };
+  $("lightning-remove").onclick = () => saveLightningAddress(true);
   $("scan-toggle").onclick = toggleScanner;
   $("scan-screen").onclick = () => scanQR("screen");
   $("scan-clipboard").onclick = () => scanQR("clipboard");
@@ -935,10 +1008,6 @@ function wire() {
   }
 
   $("settings-toggle").onclick = () => toggleSettings();
-  $("settings-done").onclick = () => {
-    toggleSettings();
-    $("settings-toggle").focus();
-  };
 
   $("account-picker").onchange = async (event) => {
     state.account = Number(event.target.value);

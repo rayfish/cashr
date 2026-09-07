@@ -8,6 +8,7 @@ mod scan;
 mod state;
 mod tray;
 mod views;
+mod wallet;
 mod window;
 
 use std::fs::File;
@@ -37,6 +38,14 @@ fn start_logging() {
         .map(|file| fmt::layer().with_ansi(false).with_writer(Mutex::new(file)));
 
     tracing_subscriber::registry()
+        // SDK spans can contain wallet metadata. Keep payment and token data
+        // out of the application's persistent diagnostic log.
+        .with(tracing_subscriber::filter::filter_fn(|metadata| {
+            !metadata.target().starts_with("cdk")
+                && !metadata.target().starts_with("cashu")
+                && !metadata.target().starts_with("reqwest")
+                && !metadata.target().starts_with("hyper")
+        }))
         .with(LevelFilter::from_level(Level::DEBUG))
         .with(fmt::layer())
         .with(file)
@@ -47,6 +56,7 @@ pub fn run() -> Result<()> {
     start_logging();
 
     tauri::Builder::default()
+        .manage(wallet::WalletService::default())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -122,6 +132,17 @@ pub fn run() -> Result<()> {
             scan::prepare_scan,
             scan::scan_clipboard,
             commands::status,
+            wallet::wallet_open,
+            wallet::wallet_list,
+            wallet::wallet_select,
+            wallet::wallet_import,
+            wallet::wallet_fund,
+            wallet::wallet_receive,
+            wallet::wallet_review,
+            wallet::wallet_pay,
+            wallet::wallet_cancel,
+            wallet::wallet_restore,
+            wallet::wallet_zap,
             commands::unlock,
             commands::lock,
             commands::forget_keychain,
@@ -131,6 +152,7 @@ pub fn run() -> Result<()> {
             commands::import_account,
             commands::delete_account,
             commands::set_default_account,
+            commands::set_lightning_address,
             commands::set_relays,
             commands::relay_health,
             commands::pair_bunker,

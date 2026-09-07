@@ -40,4 +40,5 @@ pub struct Account {
     pub created_at: Timestamp,
     pub is_default: bool,
     pub relays: Vec<RelayUrl>,
+    pub lightning_address: Option<String>,
 }
