@@ -4,6 +4,7 @@
 
 #![forbid(unsafe_code)]
 
+mod auth;
 mod connection;
 pub mod transport;
 

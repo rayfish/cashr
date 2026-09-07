@@ -16,6 +16,7 @@ with clients. *Byrgi* is Icelandic for a shelter or enclosed place—a bunker.
 | NIP-01 | Event signing and basic relay subscriptions and publishing. |
 | NIP-04 | Encrypt/decrypt methods and fallback decryption for incoming NIP-46 messages. |
 | NIP-19 | `npub` display and `nsec` private-key import; hex import is also supported. |
+| NIP-42 | Relay authentication using each account’s transport key, with retries for authentication-blocked requests. |
 | NIP-44 | Encrypt/decrypt methods and encryption for NIP-46 messages. |
 | NIP-46 | Remote signing, with both `bunker://` and `nostrconnect://` pairing. |
 | NIP-49 | Passphrase-encrypted `ncryptsec` storage for account keys. |

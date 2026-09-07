@@ -11,8 +11,10 @@ use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use nostr::event::{Event, FinalizeEvent, SignEvent, UnsignedEvent};
 use nostr::key::{Keys, PublicKey};
 use nostr::nips::nip04::Nip04;
+use nostr::nips::nip42::ClientAuthentication;
 use nostr::nips::nip44::Nip44;
 use nostr::nips::nip46::{NostrConnectEventBuilder, NostrConnectMessage};
+use nostr::types::RelayUrl;
 
 use crate::account::AccountId;
 use crate::error::{Result, SignerError};
@@ -35,7 +37,7 @@ impl fmt::Debug for AccountKeys {
 /// Which key an operation uses.
 ///
 /// The identity key signs the user's events. The transport key only ever
-/// touches the NIP-46 envelope, so the two never get mixed up by accident.
+/// signs NIP-46 envelopes and relay authentication, keeping the identity private.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Which {
     Identity,
@@ -109,6 +111,20 @@ impl Vault {
     pub fn sign_event(&self, account: AccountId, unsigned: UnsignedEvent) -> Result<Event> {
         self.with(account, Which::Identity, |keys| {
             keys.sign_event(unsigned).map_err(crypto)
+        })
+    }
+
+    /// Authenticate only the transport identity to a configured relay.
+    pub fn sign_relay_auth(
+        &self,
+        account: AccountId,
+        relay: &RelayUrl,
+        challenge: &str,
+    ) -> Result<Event> {
+        self.with(account, Which::Transport, |keys| {
+            ClientAuthentication::new(challenge, relay.clone())
+                .finalize(keys)
+                .map_err(crypto)
         })
     }
 
@@ -218,4 +234,39 @@ impl Vault {
 
 fn crypto<E: std::fmt::Display>(error: E) -> SignerError {
     SignerError::Crypto(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use nostr::nips::nip42::is_valid_auth_event;
+
+    use super::*;
+
+    #[test]
+    fn relay_auth_uses_transport_key_and_binds_relay_and_challenge() {
+        let vault = Vault::new();
+        let account = AccountId::new(1);
+        let identity = Keys::generate();
+        let transport = Keys::generate();
+        vault.write().insert(
+            account,
+            AccountKeys {
+                identity: identity.clone(),
+                transport: transport.clone(),
+            },
+        );
+        let relay = RelayUrl::parse("wss://relay.example.com").unwrap();
+        let event = vault.sign_relay_auth(account, &relay, "challenge").unwrap();
+        assert_eq!(event.pubkey, transport.public_key());
+        assert_ne!(event.pubkey, identity.public_key());
+        assert!(is_valid_auth_event(&event, &relay, "challenge"));
+        assert!(!is_valid_auth_event(&event, &relay, "other"));
+        let other = RelayUrl::parse("wss://other.example.com").unwrap();
+        assert!(!is_valid_auth_event(&event, &other, "challenge"));
+        vault.lock();
+        assert!(matches!(
+            vault.sign_relay_auth(account, &relay, "challenge"),
+            Err(SignerError::Locked)
+        ));
+    }
 }

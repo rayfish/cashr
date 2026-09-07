@@ -136,9 +136,10 @@ impl AppState {
         let approver = NotificationApprover::new();
         notifications::install(approver.clone());
 
+        let vault = Arc::new(Vault::new());
         let session = Arc::new(Session::new(SessionParts {
             storage: Arc::clone(&storage),
-            vault: Arc::new(Vault::new()),
+            vault: Arc::clone(&vault),
             keystore: keystore.clone(),
             approver: approver.clone(),
             notifier: Arc::new(WindowNotifier {
@@ -148,7 +149,7 @@ impl AppState {
             config: SessionConfig::default(),
         }));
 
-        let transport = Arc::new(RelayTransport::new());
+        let transport = Arc::new(RelayTransport::new(vault));
         let runner = Runner::new(Arc::clone(&session), transport);
 
         Ok(Self {

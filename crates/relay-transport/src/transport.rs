@@ -15,6 +15,7 @@ use nostr::types::{RelayUrl, Timestamp};
 use signer_core::account::AccountId;
 use signer_core::error::{Result, SignerError};
 use signer_core::transport::{RelayHealth, Subscription, Transport};
+use signer_core::vault::Vault;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
 
@@ -53,11 +54,15 @@ impl Drop for Pool {
 #[derive(Default)]
 pub struct RelayTransport {
     pools: Mutex<HashMap<AccountId, Pool>>,
+    vault: Arc<Vault>,
 }
 
 impl RelayTransport {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(vault: Arc<Vault>) -> Self {
+        Self {
+            vault,
+            ..Self::default()
+        }
     }
 
     /// The lock only ever guards map bookkeeping, never an await, so a
@@ -89,6 +94,8 @@ impl Transport for RelayTransport {
             }));
 
             let connection = Connection {
+                account: subscription.account,
+                vault: Arc::clone(&self.vault),
                 relay: relay.clone(),
                 filter: filter.clone(),
                 subscription: SubscriptionId::generate(),
