@@ -23,6 +23,12 @@ pub enum KeyStoreError {
     #[error("authentication is not available on this device")]
     AuthUnavailable,
 
+    #[error("the passphrase is wrong")]
+    BadPassphrase,
+
+    #[error("the signer is locked")]
+    NoPassphrase,
+
     #[error("keystore backend: {0}")]
     Backend(String),
 }

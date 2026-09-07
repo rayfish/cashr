@@ -355,6 +355,30 @@ button.plus[aria-expanded="true"] {
   flex: 1;
 }
 
+/* ----------------------------------------------------------------- unlock */
+
+.unlock {
+  flex: none;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.unlock-title {
+  font-weight: 550;
+}
+
+.unlock form {
+  gap: 6px;
+}
+
+.unlock input {
+  flex: 1;
+}
+
 /* ------------------------------------------------------------------- dots */
 
 .dot {

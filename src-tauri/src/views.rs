@@ -159,6 +159,11 @@ pub struct StatusView {
     pub unlocked: bool,
     pub accounts: Vec<AccountView>,
     pub pending: usize,
+    /// An account still has its keys only in the Keychain, so the passphrase
+    /// box is setting one rather than asking for one that exists.
+    pub needs_migration: bool,
+    /// Keys are in files now, but the old Keychain copies are still there.
+    pub has_keychain_copies: bool,
 }
 
 /// Parse a method name coming back from the window.

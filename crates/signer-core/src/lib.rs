@@ -12,6 +12,7 @@ pub mod account;
 pub mod approval;
 pub mod client;
 pub mod error;
+pub mod keyfile;
 pub mod keystore;
 pub mod kinds;
 pub mod pairing;

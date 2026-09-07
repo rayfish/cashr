@@ -21,6 +21,29 @@
 
     <section id="prompts" class="prompts" hidden></section>
 
+    <section id="unlock" class="unlock" hidden>
+      <div id="unlock-title" class="unlock-title"></div>
+      <div id="unlock-hint" class="empty"></div>
+      <form id="unlock-form" class="row">
+        <input
+          id="unlock-passphrase"
+          type="password"
+          placeholder="Passphrase"
+          autocomplete="current-password"
+        />
+        <button id="unlock-go" class="primary" type="submit">Unlock</button>
+      </form>
+      <div id="unlock-error" class="empty" hidden></div>
+    </section>
+
+    <section id="keychain-leftover" class="unlock" hidden>
+      <div class="empty">
+        Your keys are in encrypted files now. The old Keychain copies are still
+        there, in the clear.
+      </div>
+      <button id="forget-keychain" class="danger">Delete the Keychain copies</button>
+    </section>
+
     <nav class="tabs" role="tablist">
       <button class="tab is-active" data-tab="home">Account</button>
       <button class="tab" data-tab="clients">Clients</button>

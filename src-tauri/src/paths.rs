@@ -16,6 +16,16 @@ pub fn database(app: &AppHandle) -> Result<PathBuf> {
     Ok(dir.join("signer.db"))
 }
 
+/// `~/Library/Application Support/<bundle id>/keys`, where the NIP-49
+/// encrypted key files live. Created if it does not exist.
+pub fn keys(app: &AppHandle) -> Result<PathBuf> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| anyhow!("no application data directory: {e}"))?;
+    Ok(dir.join("keys"))
+}
+
 /// `~/Library/Logs/Byrgi/byrgi.log`.
 ///
 /// Worked out from the home directory rather than asked of Tauri, because

@@ -32,18 +32,34 @@ fn fail<E: std::fmt::Display>(error: E) -> String {
 }
 
 #[tauri::command]
-pub fn status(state: State<'_, AppState>) -> CommandResult<StatusView> {
+pub async fn status(state: State<'_, AppState>) -> CommandResult<StatusView> {
     let accounts = state.accounts().map_err(fail)?;
+
+    // A passphrase and nothing left to load. The second half matters on a
+    // fresh signer: with no accounts the vault holds nothing and would read as
+    // locked forever, which would leave no way to set the passphrase that
+    // making the first account needs.
+    let unlocked = state.keystore.has_passphrase()
+        && (accounts.is_empty() || state.session.vault().is_unlocked());
+
     Ok(StatusView {
-        unlocked: state.session.vault().is_unlocked(),
+        unlocked,
         accounts: accounts.iter().map(AccountView::from).collect(),
         pending: state.approver.pending_count(),
+        needs_migration: state.needs_migration(),
+        has_keychain_copies: state.has_keychain_copies(),
     })
 }
 
 #[tauri::command]
-pub async fn unlock(state: State<'_, AppState>) -> CommandResult<()> {
-    state.unlock().await.map_err(fail)
+pub async fn unlock(state: State<'_, AppState>, passphrase: String) -> CommandResult<()> {
+    state.unlock(&passphrase).await.map_err(fail)
+}
+
+/// Delete the old Keychain copies, once the key files are the real ones.
+#[tauri::command]
+pub async fn forget_keychain(state: State<'_, AppState>) -> CommandResult<()> {
+    state.forget_keychain().await.map_err(fail)
 }
 
 #[tauri::command]

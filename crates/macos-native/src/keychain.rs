@@ -80,6 +80,17 @@ impl KeychainKeyStore {
         platform::read(&self.service, &Self::item_name(handle.account))?
             .ok_or(KeyStoreError::NotFound(handle))
     }
+
+    /// Whether an account still has an item here, without reading the key.
+    ///
+    /// Not `public_key`, and not `load`: asking whether a key exists is not a
+    /// reason to make the user prove anything, and the trait's `public_key`
+    /// gets there by reading the secret. This is the only question the app
+    /// still asks the Keychain once an account has moved to a key file, and it
+    /// is asked on every status refresh, so it must be silent.
+    pub fn holds(&self, account: AccountId) -> Result<bool, KeyStoreError> {
+        platform::exists(&self.service, &Self::item_name(account))
+    }
 }
 
 /// Take one role's key out of the item both roles share.
@@ -140,6 +151,7 @@ impl KeyStore for KeychainKeyStore {
 
 #[cfg(target_os = "macos")]
 mod platform {
+    use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
     use security_framework::passwords::set_generic_password_options;
     use security_framework::passwords::{delete_generic_password, generic_password};
     use security_framework::passwords_options::PasswordOptions;
@@ -168,6 +180,27 @@ mod platform {
         serde_json::from_slice(&bytes)
             .map(Some)
             .map_err(|e| KeyStoreError::Backend(format!("stored item is not readable: {e}")))
+    }
+
+    /// Attributes only, deliberately.
+    ///
+    /// It is asking for the data that makes the Keychain check the item's
+    /// access control and put a password dialog in front of the user. A match
+    /// on the attributes answers "is it there" without that.
+    pub(super) fn exists(service: &str, account: &str) -> Result<bool, KeyStoreError> {
+        let mut options = ItemSearchOptions::new();
+        options
+            .class(ItemClass::generic_password())
+            .service(service)
+            .account(account)
+            .load_attributes(true)
+            .limit(Limit::Max(1));
+
+        match options.search() {
+            Ok(found) => Ok(!found.is_empty()),
+            Err(e) if e.code() == NOT_FOUND => Ok(false),
+            Err(e) => Err(translate(e)),
+        }
     }
 
     pub(super) fn write(
@@ -233,6 +266,10 @@ mod platform {
         _account: &str,
     ) -> Result<Option<StoredKeys>, KeyStoreError> {
         Err(unsupported())
+    }
+
+    pub(super) fn exists(_service: &str, _account: &str) -> Result<bool, KeyStoreError> {
+        Ok(false)
     }
 
     pub(super) fn write(

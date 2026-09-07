@@ -1,5 +1,6 @@
 //! What the app holds while it runs.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -10,7 +11,8 @@ use nostr::types::RelayUrl;
 use relay_transport::RelayTransport;
 use signer_core::account::{Account, AccountId};
 use signer_core::approval::{Notifier, SignerEvent};
-use signer_core::keystore::{AccountKeys, KeyStore};
+use signer_core::keyfile::FileKeyStore;
+use signer_core::keystore::{AccountKeys, KeyHandle, KeyRole, KeyStore};
 use signer_core::runner::Runner;
 use signer_core::session::{Session, SessionConfig, SessionParts};
 use signer_core::storage::{NewAccount, Storage};
@@ -97,17 +99,26 @@ pub struct AppState {
     pub session: Arc<Session>,
     pub runner: Runner,
     pub approver: Arc<NotificationApprover>,
-    pub keystore: Arc<KeychainKeyStore>,
+    pub keystore: Arc<FileKeyStore>,
+    /// Where keys used to live. Kept only to migrate accounts off it, and to
+    /// clear an account's old copy when the user asks.
+    pub keychain: Arc<KeychainKeyStore>,
     pub window: WindowState,
 }
 
 impl AppState {
-    pub fn build(app: &AppHandle, storage: Storage, bundle_id: &str) -> Result<Self> {
+    pub fn build(
+        app: &AppHandle,
+        storage: Storage,
+        keys_dir: PathBuf,
+        bundle_id: &str,
+    ) -> Result<Self> {
         let storage = Arc::new(storage);
         storage.prune_pairings()?;
         storage.prune_activity()?;
 
-        let keystore = Arc::new(KeychainKeyStore::new(bundle_id));
+        let keystore = Arc::new(FileKeyStore::new(keys_dir)?);
+        let keychain = Arc::new(KeychainKeyStore::new(bundle_id));
         let approver = NotificationApprover::new();
         notifications::install(approver.clone());
 
@@ -132,6 +143,7 @@ impl AppState {
             runner,
             approver,
             keystore,
+            keychain,
             window: WindowState::default(),
         })
     }
@@ -154,11 +166,60 @@ impl AppState {
         Ok(())
     }
 
+    /// Whether any account still has its keys only in the Keychain.
+    ///
+    /// What the window asks to decide whether the passphrase box is setting a
+    /// passphrase for the first time or being asked for one that exists.
+    pub fn needs_migration(&self) -> bool {
+        self.accounts()
+            .map(|accounts| {
+                accounts
+                    .iter()
+                    .any(|account| !self.keystore.holds(account.id))
+            })
+            .unwrap_or(false)
+    }
+
+    /// Whether any account has an old Keychain copy still sitting there.
+    ///
+    /// The window asks this on every refresh, which is after every request, so
+    /// it goes through `holds` rather than reading a key. Reading is what puts
+    /// the macOS password dialog on screen, and the answer to "is the old copy
+    /// still there" is not worth a dialog.
+    pub fn has_keychain_copies(&self) -> bool {
+        self.accounts()
+            .unwrap_or_default()
+            .iter()
+            .any(|account| self.keychain.holds(account.id).unwrap_or(false))
+    }
+
     /// Unlock every account and answer whatever arrived while locked.
-    pub async fn unlock(&self) -> Result<()> {
+    ///
+    /// The passphrase is what opens the key files, and it is also what any
+    /// account still living in the Keychain is migrated onto on the way
+    /// through. That is deliberately the same step: an unlock that left half
+    /// the accounts behind would be an unlock that has to be explained.
+    pub async fn unlock(&self, passphrase: &str) -> Result<()> {
+        if passphrase.is_empty() {
+            anyhow::bail!("the passphrase cannot be empty");
+        }
+        self.keystore.set_passphrase(passphrase);
+
         let accounts = self.accounts()?;
+        for account in &accounts {
+            if !self.keystore.holds(account.id) {
+                self.migrate(account.id).await?;
+            }
+        }
+
         let ids: Vec<AccountId> = accounts.iter().map(|a| a.id).collect();
-        self.session.unlock(&ids).await?;
+        if let Err(error) = self.session.unlock(&ids).await {
+            // A passphrase that opened nothing must not stay behind looking
+            // like a working one, or the next account created would be sealed
+            // with something the user never chose.
+            self.keystore.clear_passphrase();
+            return Err(error.into());
+        }
 
         // Ensure rather than start: an account already listening keeps its
         // connections, and one added since launch gets its own.
@@ -172,6 +233,62 @@ impl AppState {
 
     pub fn lock(&self) {
         self.session.lock();
+        self.keystore.clear_passphrase();
+    }
+
+    /// Move one account's keys out of the Keychain and into a key file.
+    ///
+    /// This is the last time the Keychain is read, and it costs the one
+    /// password dialog it has always cost. What comes out is encrypted under
+    /// the passphrase, written, and then read back and compared before the
+    /// migration is called done: a key file that does not decrypt to what went
+    /// into it is an account nobody can unlock again.
+    ///
+    /// The Keychain copy is left alone. Deleting a key is not something to do
+    /// on the way past, so it is a separate thing the user asks for.
+    async fn migrate(&self, account: AccountId) -> Result<()> {
+        let handles = [
+            KeyHandle::new(account, KeyRole::Identity),
+            KeyHandle::new(account, KeyRole::Transport),
+        ];
+        let old = self.keychain.load_many(&handles).await?;
+        let [identity, transport] = old.as_slice() else {
+            anyhow::bail!("the Keychain returned the wrong number of keys");
+        };
+
+        let keys = AccountKeys {
+            identity: identity.secret_key().clone(),
+            transport: transport.secret_key().clone(),
+        };
+        self.keystore.store(account, &keys).await?;
+
+        let written = self.keystore.load_many(&handles).await?;
+        if written.len() != old.len()
+            || written
+                .iter()
+                .zip(old.iter())
+                .any(|(a, b)| a.secret_key() != b.secret_key())
+        {
+            self.keystore.delete(account).await?;
+            anyhow::bail!("the migrated keys did not read back; nothing was changed");
+        }
+
+        tracing::info!(%account, "keys migrated out of the Keychain");
+        Ok(())
+    }
+
+    /// Delete the Keychain copies now that the key files are the real ones.
+    ///
+    /// Refuses while anything is unmigrated, so this can never be the step
+    /// that loses a key.
+    pub async fn forget_keychain(&self) -> Result<()> {
+        if self.needs_migration() {
+            anyhow::bail!("unlock first, so the keys are somewhere else before this removes them");
+        }
+        for account in self.accounts()? {
+            self.keychain.delete(account.id).await?;
+        }
+        Ok(())
     }
 
     /// Create a fresh identity, its transport key, and the account row.
@@ -185,6 +302,13 @@ impl AppState {
     }
 
     async fn add_account(&self, label: String, identity: Keys) -> Result<Account> {
+        // Without one there is nothing to seal the new key with, and an
+        // account whose keys cannot be written is an account that should not
+        // be made.
+        if !self.keystore.has_passphrase() {
+            anyhow::bail!("unlock the signer first, so there is a passphrase to protect the key");
+        }
+
         let transport = Keys::generate();
         let relays: Vec<RelayUrl> = DEFAULT_RELAYS
             .iter()
@@ -239,6 +363,8 @@ impl AppState {
     pub async fn delete_account(&self, id: AccountId) -> Result<()> {
         self.runner.stop(id).await;
         self.keystore.delete(id).await?;
+        // Any copy left over from before the move is part of the account too.
+        self.keychain.delete(id).await?;
         self.storage.delete_account(id)?;
         Ok(())
     }

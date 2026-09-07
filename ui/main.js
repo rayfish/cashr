@@ -8,6 +8,8 @@ const state = {
   client: null,
   activityCursor: null,
   unlocked: false,
+  needsMigration: false,
+  hasKeychainCopies: false,
   pending: 0,
   health: [],
   pinned: false,
@@ -188,6 +190,8 @@ async function refreshStatus() {
   const status = await call("status");
   state.unlocked = status.unlocked;
   state.accounts = status.accounts;
+  state.needsMigration = status.needs_migration;
+  state.hasKeychainCopies = status.has_keychain_copies;
   if (!currentAccount()) {
     state.account =
       state.accounts.find((a) => a.is_default)?.id ??
@@ -200,12 +204,78 @@ async function refreshStatus() {
   toggle.textContent = state.unlocked ? "Lock" : "Unlock";
   toggle.title = state.unlocked
     ? "Forget the keys until the next unlock"
-    : "Load the keys from the Keychain";
+    : "Decrypt the keys with your passphrase";
 
+  renderUnlock();
   renderAccountPicker();
   renderAccountCard();
   renderAccountList();
   renderRelays();
+}
+
+/// The passphrase box, and what it is for this time.
+///
+/// Setting a passphrase and giving one are the same box with the same button,
+/// because they are the same act from where the user is standing. Only the
+/// words above it change, and they have to: one of them cannot be got wrong
+/// twice, and the other cannot be got wrong at all.
+function renderUnlock() {
+  const panel = $("unlock");
+  panel.hidden = state.unlocked;
+  $("unlock-error").hidden = true;
+
+  const fresh = state.accounts.length === 0;
+  const migrating = state.needsMigration && !fresh;
+  const setting = fresh || migrating;
+
+  $("unlock-title").textContent = setting ? "Choose a passphrase" : "Unlock";
+  $("unlock-hint").textContent = migrating
+    ? "Your keys move out of the Keychain and into files encrypted with this. There is no way to recover it, and no way in without it."
+    : setting
+      ? "Your keys will be encrypted with this. There is no way to recover it, and no way in without it."
+      : "Your keys are encrypted with this.";
+  $("unlock-passphrase").autocomplete = setting
+    ? "new-password"
+    : "current-password";
+  $("unlock-go").textContent = setting ? "Set and unlock" : "Unlock";
+
+  // Only worth offering once the keys are safely somewhere else.
+  $("keychain-leftover").hidden = !(state.unlocked && state.hasKeychainCopies);
+}
+
+async function submitUnlock() {
+  const field = $("unlock-passphrase");
+  const passphrase = field.value;
+  if (passphrase === "") return;
+
+  const error = $("unlock-error");
+  const button = $("unlock-go");
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Working…";
+  error.hidden = true;
+
+  // Pinned by hand rather than through `call`, which toasts: a wrong
+  // passphrase belongs under the box it was typed in, not in a corner. The pin
+  // matters because migrating still reads the Keychain, and that prompt takes
+  // the focus, which would send the window away mid-unlock.
+  state.busy += 1;
+  syncPinned();
+  try {
+    // scrypt takes about a second per key by design, so the window has to say
+    // it is doing something or it reads as broken.
+    await invoke("unlock", { passphrase });
+    field.value = "";
+    await refreshAll();
+  } catch (failure) {
+    error.textContent = String(failure);
+    error.hidden = false;
+  } finally {
+    state.busy -= 1;
+    syncPinned();
+    button.disabled = false;
+    button.textContent = label;
+  }
 }
 
 function renderAccountPicker() {
@@ -547,9 +617,23 @@ function wire() {
   };
 
   $("lock-toggle").onclick = async () => {
-    await call(state.unlocked ? "lock" : "unlock");
-    await refreshAll();
+    if (state.unlocked) {
+      await call("lock");
+      await refreshAll();
+      return;
+    }
+    $("unlock-passphrase").focus();
   };
+
+  $("unlock-form").onsubmit = (event) => {
+    event.preventDefault();
+    submitUnlock();
+  };
+
+  arm($("forget-keychain"), "Delete the Keychain copies", async () => {
+    await call("forget_keychain");
+    await refreshAll();
+  });
 
   const pin = $("pin-toggle");
   pin.onclick = () => {

@@ -55,7 +55,12 @@ pub fn run() -> Result<()> {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let storage = Storage::open(&paths::database(&handle)?)?;
-            let state = AppState::build(&handle, storage, &app.config().identifier)?;
+            let state = AppState::build(
+                &handle,
+                storage,
+                paths::keys(&handle)?,
+                &app.config().identifier,
+            )?;
             app.manage(state);
 
             tray::build(&handle)?;
@@ -114,6 +119,7 @@ pub fn run() -> Result<()> {
             commands::status,
             commands::unlock,
             commands::lock,
+            commands::forget_keychain,
             commands::create_account,
             commands::import_account,
             commands::delete_account,
