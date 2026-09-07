@@ -251,7 +251,9 @@ function renderUnlock() {
 
   // Nothing to remember while setting one either: the passphrase is stored
   // only after it has opened something, and there is nothing to open yet.
-  $("unlock-remember-row").hidden = state.hasTouchId || setting;
+  const offerRemember = !state.hasTouchId && !setting;
+  $("unlock-remember-row").hidden = !offerRemember;
+  $("unlock-remember-hint").hidden = !offerRemember;
   if (!state.hasTouchId) $("unlock-remember").checked = false;
 
   // Only worth offering once the keys are safely somewhere else.

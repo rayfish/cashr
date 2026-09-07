@@ -10,10 +10,10 @@
 //! there is bound to the code signature that created it, and not to the
 //! signature's designated requirement but to the binary, so every rebuild and
 //! every app update makes the app a stranger to its own item and the user gets
-//! a login password dialog. Guarding an item with the Keychain's own Touch ID
-//! avoids that, and needs the data protection keychain, a keychain access
-//! group entitlement, and a paid Developer ID. A file asks for nothing and
-//! never puts a dialog in the way. See `presence` for the same trade.
+//! a login password dialog. Sealing the secret under a Secure Enclave key
+//! avoids both problems and is what a password manager does; `presence` has
+//! the measured reason that is not open to us. A file asks for nothing and
+//! never puts a dialog in the way, and buys correspondingly less.
 
 use std::fs;
 use std::io;

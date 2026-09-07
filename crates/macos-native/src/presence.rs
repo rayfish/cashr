@@ -1,11 +1,18 @@
 //! Asking the user to prove they are there, through LocalAuthentication.
 //!
-//! Touch ID could be left to the Keychain itself, by giving the item a
-//! `SecAccessControl` with `USER_PRESENCE`. That puts the item in the data
-//! protection keychain, which macOS only opens to an app signed with a
-//! keychain access group, and that entitlement is restricted: a build carrying
-//! it without a provisioning profile is refused at launch, so it needs a paid
-//! Developer ID. Asking here instead keeps the same prompt without one.
+//! Touch ID could be left to the system itself, by keeping the secret under a
+//! Secure Enclave key with a `SecAccessControl` requiring presence. That is
+//! what a password manager does, and it is the only version where the
+//! biometric is in the data path rather than beside it.
+//!
+//! It is not available here, and the reason was measured rather than assumed.
+//! Generating the key works: the Enclave hands back a P-256 key. Keeping it
+//! does not. An Enclave key has to live in the data protection keychain, and
+//! `SecKeyCreateRandomKey` with `kSecAttrIsPermanent` returns OSStatus -34018,
+//! `errSecMissingEntitlement`, because that keychain needs a keychain access
+//! group, which needs an application identifier, which comes from a
+//! provisioning profile and therefore from a paid Developer ID. Asking here
+//! keeps the same prompt without one.
 //!
 //! What is lost is who enforces it. The Keychain would refuse the read itself;
 //! here the app refuses to read. The item is still bound to this app's code
