@@ -164,6 +164,8 @@ pub struct StatusView {
     pub needs_migration: bool,
     /// Keys are in files now, but the old Keychain copies are still there.
     pub has_keychain_copies: bool,
+    /// The passphrase is stored behind Touch ID, so unlocking can be a tap.
+    pub has_touch_id: bool,
 }
 
 /// Parse a method name coming back from the window.

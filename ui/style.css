@@ -379,6 +379,18 @@ button.plus[aria-expanded="true"] {
   flex: 1;
 }
 
+.unlock input[type="checkbox"] {
+  flex: none;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* ------------------------------------------------------------------- dots */
 
 .dot {

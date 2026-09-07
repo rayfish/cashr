@@ -10,6 +10,7 @@ const state = {
   unlocked: false,
   needsMigration: false,
   hasKeychainCopies: false,
+  hasTouchId: false,
   pending: 0,
   health: [],
   pinned: false,
@@ -192,6 +193,7 @@ async function refreshStatus() {
   state.accounts = status.accounts;
   state.needsMigration = status.needs_migration;
   state.hasKeychainCopies = status.has_keychain_copies;
+  state.hasTouchId = status.has_touch_id;
   if (!currentAccount()) {
     state.account =
       state.accounts.find((a) => a.is_default)?.id ??
@@ -239,8 +241,56 @@ function renderUnlock() {
     : "current-password";
   $("unlock-go").textContent = setting ? "Set and unlock" : "Unlock";
 
+  // Touch ID is an alternative to typing, not to knowing: the box stays
+  // whatever the sensor says, because a finger that will not read is the
+  // moment the passphrase has to be reachable without hunting for it.
+  $("unlock-touch-id").hidden = !(state.hasTouchId && !setting);
+
+  // Nothing to remember while setting one either: the passphrase is stored
+  // only after it has opened something, and there is nothing to open yet.
+  $("unlock-remember-row").hidden = state.hasTouchId || setting;
+  if (!state.hasTouchId) $("unlock-remember").checked = false;
+
   // Only worth offering once the keys are safely somewhere else.
   $("keychain-leftover").hidden = !(state.unlocked && state.hasKeychainCopies);
+
+  $("touch-id-state").textContent = state.hasTouchId
+    ? "Your passphrase is in the Keychain, behind Touch ID. Turning this off deletes it and goes back to typing."
+    : "Your passphrase is not stored anywhere. Tick the box on the unlock screen to keep it behind Touch ID.";
+  $("forget-touch-id").hidden = !state.hasTouchId;
+}
+
+/// Unlock by asking the Keychain for the passphrase, behind Touch ID.
+///
+/// Same pinning and same error line as typing it: from the user's side this is
+/// the same act done with a finger.
+async function unlockWithTouchId() {
+  const button = $("unlock-touch-id");
+  const error = $("unlock-error");
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Working…";
+  error.hidden = true;
+
+  // The Touch ID sheet takes the focus, which would send an unpinned window
+  // away in the middle of the unlock.
+  state.busy += 1;
+  syncPinned();
+  try {
+    await invoke("unlock_with_touch_id");
+    await refreshAll();
+  } catch (failure) {
+    error.textContent = String(failure);
+    error.hidden = false;
+    // A cancelled prompt leaves Touch ID set up, a rejected passphrase does
+    // not. Either way the answer comes from the backend, so ask again.
+    await refreshStatus();
+  } finally {
+    state.busy -= 1;
+    syncPinned();
+    button.disabled = false;
+    button.textContent = label;
+  }
 }
 
 async function submitUnlock() {
@@ -264,7 +314,10 @@ async function submitUnlock() {
   try {
     // scrypt takes about a second per key by design, so the window has to say
     // it is doing something or it reads as broken.
-    await invoke("unlock", { passphrase });
+    await invoke("unlock", {
+      passphrase,
+      remember: $("unlock-remember").checked,
+    });
     field.value = "";
     await refreshAll();
   } catch (failure) {
@@ -622,8 +675,16 @@ function wire() {
       await refreshAll();
       return;
     }
+    // Touch ID is one press, so send the user there rather than to a field
+    // they would have to type in.
+    if (state.hasTouchId) {
+      unlockWithTouchId();
+      return;
+    }
     $("unlock-passphrase").focus();
   };
+
+  $("unlock-touch-id").onclick = () => unlockWithTouchId();
 
   $("unlock-form").onsubmit = (event) => {
     event.preventDefault();
@@ -632,6 +693,11 @@ function wire() {
 
   arm($("forget-keychain"), "Delete the Keychain copies", async () => {
     await call("forget_keychain");
+    await refreshAll();
+  });
+
+  arm($("forget-touch-id"), "Stop unlocking with Touch ID", async () => {
+    await call("forget_touch_id");
     await refreshAll();
   });
 

@@ -905,6 +905,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-local-authentication",
  "objc2-user-notifications",
+ "secrecy",
  "security-framework",
  "serde",
  "serde_json",

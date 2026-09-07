@@ -120,6 +120,8 @@ pub fn run() -> Result<()> {
             commands::unlock,
             commands::lock,
             commands::forget_keychain,
+            commands::unlock_with_touch_id,
+            commands::forget_touch_id,
             commands::create_account,
             commands::import_account,
             commands::delete_account,

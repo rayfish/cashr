@@ -39,8 +39,7 @@ pub async fn status(state: State<'_, AppState>) -> CommandResult<StatusView> {
     // fresh signer: with no accounts the vault holds nothing and would read as
     // locked forever, which would leave no way to set the passphrase that
     // making the first account needs.
-    let unlocked = state.keystore.has_passphrase()
-        && (accounts.is_empty() || state.session.vault().is_unlocked());
+    let unlocked = state.has_passphrase() && (accounts.is_empty() || state.is_unlocked());
 
     Ok(StatusView {
         unlocked,
@@ -48,12 +47,30 @@ pub async fn status(state: State<'_, AppState>) -> CommandResult<StatusView> {
         pending: state.approver.pending_count(),
         needs_migration: state.needs_migration(),
         has_keychain_copies: state.has_keychain_copies(),
+        has_touch_id: state.has_touch_id(),
     })
 }
 
+/// Unlock by typing the passphrase. `remember` puts it behind Touch ID.
 #[tauri::command]
-pub async fn unlock(state: State<'_, AppState>, passphrase: String) -> CommandResult<()> {
-    state.unlock(&passphrase).await.map_err(fail)
+pub async fn unlock(
+    state: State<'_, AppState>,
+    passphrase: String,
+    remember: bool,
+) -> CommandResult<()> {
+    state.unlock(&passphrase, remember).await.map_err(fail)
+}
+
+/// Unlock with Touch ID, using the passphrase it guards.
+#[tauri::command]
+pub async fn unlock_with_touch_id(state: State<'_, AppState>) -> CommandResult<()> {
+    state.unlock_with_touch_id().await.map_err(fail)
+}
+
+/// Stop unlocking with Touch ID, and delete the passphrase it was guarding.
+#[tauri::command]
+pub async fn forget_touch_id(state: State<'_, AppState>) -> CommandResult<()> {
+    state.forget_touch_id().map_err(fail)
 }
 
 /// Delete the old Keychain copies, once the key files are the real ones.

@@ -24,6 +24,9 @@
     <section id="unlock" class="unlock" hidden>
       <div id="unlock-title" class="unlock-title"></div>
       <div id="unlock-hint" class="empty"></div>
+      <button id="unlock-touch-id" class="primary wide" type="button" hidden>
+        Unlock with Touch ID
+      </button>
       <form id="unlock-form" class="row">
         <input
           id="unlock-passphrase"
@@ -33,6 +36,10 @@
         />
         <button id="unlock-go" class="primary" type="submit">Unlock</button>
       </form>
+      <label id="unlock-remember-row" class="check" hidden>
+        <input id="unlock-remember" type="checkbox" />
+        Unlock with Touch ID next time
+      </label>
       <div id="unlock-error" class="empty" hidden></div>
     </section>
 
@@ -101,10 +108,16 @@
             <button id="account-import">Import</button>
           </div>
           <p class="hint">
-            An imported key goes straight into the Keychain. It is never written
-            to the database.
+            An imported key is encrypted with your passphrase and written to a
+            key file. It never goes in the database.
           </p>
         </div>
+
+        <h2>Unlocking</h2>
+        <p id="touch-id-state" class="hint"></p>
+        <button id="forget-touch-id" class="danger" hidden>
+          Stop unlocking with Touch ID
+        </button>
       </section>
 
       <section id="tab-clients" class="panel">

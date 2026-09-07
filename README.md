@@ -92,6 +92,16 @@ leaves the old copy alone. Deleting it is offered separately, once the new
 files have been read back and checked, because a step that removes a key
 should be one you took on purpose.
 
+Typing the passphrase every launch is optional. Tick "Unlock with Touch ID
+next time" and it is stored as a Keychain item of its own, read back behind a
+Touch ID prompt, and used to open the key files. That buys one press instead
+of typing, and costs the property that nothing on disk opens the keys on its
+own: the passphrase is now sitting next to them. What guards it is the app
+asking LocalAuthentication and honouring the answer, not the Keychain refusing
+the read, for the entitlement reason above. It is off until you ask for it,
+the passphrase still works when the sensor will not, and turning it off
+deletes the item.
+
 Pairing works in both directions, and the two are not symmetric. `bunker://`
 is minted here and pasted into the client, which then sends a `connect` this
 signer answers. `nostrconnect://` is minted by the client and pasted in here,

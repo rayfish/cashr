@@ -14,9 +14,13 @@
 //! of them. Everything else, the Keychain included, goes through safe
 //! bindings, and the other crates in this workspace forbid unsafe outright.
 
+mod items;
+
 pub mod keychain;
 pub mod notifications;
+pub mod passphrase;
 pub mod presence;
 
 pub use keychain::KeychainKeyStore;
 pub use notifications::NotificationApprover;
+pub use passphrase::PassphraseStore;

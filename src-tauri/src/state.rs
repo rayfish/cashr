@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use macos_native::notifications::{self, NotificationApprover};
-use macos_native::KeychainKeyStore;
+use macos_native::{KeychainKeyStore, PassphraseStore};
 use nostr::key::Keys;
 use nostr::types::RelayUrl;
 use relay_transport::RelayTransport;
+use secrecy::ExposeSecret;
 use signer_core::account::{Account, AccountId};
 use signer_core::approval::{Notifier, SignerEvent};
 use signer_core::keyfile::FileKeyStore;
@@ -99,10 +100,16 @@ pub struct AppState {
     pub session: Arc<Session>,
     pub runner: Runner,
     pub approver: Arc<NotificationApprover>,
-    pub keystore: Arc<FileKeyStore>,
+    /// The key files. Private: the only thing outside this module needs to
+    /// know is whether the signer is open, and that is `has_passphrase`.
+    keystore: Arc<FileKeyStore>,
     /// Where keys used to live. Kept only to migrate accounts off it, and to
-    /// clear an account's old copy when the user asks.
-    pub keychain: Arc<KeychainKeyStore>,
+    /// clear an account's old copy when the user asks. Once no install in the
+    /// field has an account left in the Keychain, this and the crate behind it
+    /// can go.
+    keychain: Arc<KeychainKeyStore>,
+    /// The passphrase behind Touch ID, when the user has asked for that.
+    passphrases: Arc<PassphraseStore>,
     pub window: WindowState,
 }
 
@@ -119,6 +126,7 @@ impl AppState {
 
         let keystore = Arc::new(FileKeyStore::new(keys_dir)?);
         let keychain = Arc::new(KeychainKeyStore::new(bundle_id));
+        let passphrases = Arc::new(PassphraseStore::new(bundle_id));
         let approver = NotificationApprover::new();
         notifications::install(approver.clone());
 
@@ -144,6 +152,7 @@ impl AppState {
             approver,
             keystore,
             keychain,
+            passphrases,
             window: WindowState::default(),
         })
     }
@@ -193,13 +202,70 @@ impl AppState {
             .any(|account| self.keychain.holds(account.id).unwrap_or(false))
     }
 
+    /// Unlock with a typed passphrase, and keep it for Touch ID if asked.
+    pub async fn unlock(&self, passphrase: &str, remember: bool) -> Result<()> {
+        self.unlock_with(passphrase).await?;
+
+        // Only after the unlock worked. Storing a passphrase that opens
+        // nothing would set up a Touch ID that fails every time, and the user
+        // would have no way to tell that from the sensor being at fault.
+        if remember {
+            if let Err(error) = self.passphrases.store(passphrase) {
+                // The unlock stands. Touch ID is a convenience, and losing it
+                // is not a reason to refuse an unlock that has already worked.
+                tracing::warn!("could not store the passphrase for Touch ID: {error}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Unlock with the passphrase kept behind Touch ID.
+    ///
+    /// A stored passphrase that no longer opens the files is deleted rather
+    /// than left to fail again tomorrow. It cannot be repaired from here, and
+    /// the passphrase box behind it still works.
+    pub async fn unlock_with_touch_id(&self) -> Result<()> {
+        let passphrase = self.passphrases.load().await?;
+        match self.unlock_with(passphrase.expose_secret()).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                tracing::warn!("the stored passphrase did not unlock; forgetting it");
+                let _ = self.passphrases.forget();
+                Err(error)
+            }
+        }
+    }
+
+    /// Stop offering Touch ID and delete the stored passphrase.
+    pub fn forget_touch_id(&self) -> Result<()> {
+        self.passphrases.forget()?;
+        Ok(())
+    }
+
+    /// Whether Touch ID unlocking is set up. Silent, so the window can ask on
+    /// every refresh.
+    pub fn has_touch_id(&self) -> bool {
+        self.passphrases.is_set()
+    }
+
+    /// Whether a passphrase is loaded, which is what makes the key files
+    /// readable and a new account writable.
+    pub fn has_passphrase(&self) -> bool {
+        self.keystore.has_passphrase()
+    }
+
+    /// Whether any account's keys are loaded.
+    pub fn is_unlocked(&self) -> bool {
+        self.session.vault().is_unlocked()
+    }
+
     /// Unlock every account and answer whatever arrived while locked.
     ///
     /// The passphrase is what opens the key files, and it is also what any
     /// account still living in the Keychain is migrated onto on the way
     /// through. That is deliberately the same step: an unlock that left half
     /// the accounts behind would be an unlock that has to be explained.
-    pub async fn unlock(&self, passphrase: &str) -> Result<()> {
+    async fn unlock_with(&self, passphrase: &str) -> Result<()> {
         if passphrase.is_empty() {
             anyhow::bail!("the passphrase cannot be empty");
         }

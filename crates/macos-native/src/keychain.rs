@@ -77,7 +77,7 @@ impl KeychainKeyStore {
     /// and therefore a separate Keychain access check, so callers that want
     /// both roles read it once and take both out.
     fn read_item(&self, handle: KeyHandle) -> Result<StoredKeys, KeyStoreError> {
-        platform::read(&self.service, &Self::item_name(handle.account))?
+        payload::read(&self.service, &Self::item_name(handle.account))?
             .ok_or(KeyStoreError::NotFound(handle))
     }
 
@@ -89,7 +89,7 @@ impl KeychainKeyStore {
     /// still asks the Keychain once an account has moved to a key file, and it
     /// is asked on every status refresh, so it must be silent.
     pub fn holds(&self, account: AccountId) -> Result<bool, KeyStoreError> {
-        platform::exists(&self.service, &Self::item_name(account))
+        payload::exists(&self.service, &Self::item_name(account))
     }
 }
 
@@ -119,11 +119,11 @@ impl KeyStore for KeychainKeyStore {
     /// creating an account would ask for Touch ID over a key the app had just
     /// generated itself.
     async fn store(&self, account: AccountId, keys: &AccountKeys) -> Result<(), KeyStoreError> {
-        platform::write(&self.service, &Self::item_name(account), &keys.into())
+        payload::write(&self.service, &Self::item_name(account), &keys.into())
     }
 
     async fn delete(&self, account: AccountId) -> Result<(), KeyStoreError> {
-        platform::delete(&self.service, &Self::item_name(account))
+        payload::delete(&self.service, &Self::item_name(account))
     }
 
     /// One presence prompt, and one Keychain read per account.
@@ -149,58 +149,22 @@ impl KeyStore for KeychainKeyStore {
     }
 }
 
-#[cfg(target_os = "macos")]
-mod platform {
-    use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
-    use security_framework::passwords::set_generic_password_options;
-    use security_framework::passwords::{delete_generic_password, generic_password};
-    use security_framework::passwords_options::PasswordOptions;
+/// The item body: both of an account's keys as JSON. The Keychain call
+/// itself is in `items`; this is only what goes in and out of it.
+mod payload {
     use signer_core::keystore::KeyStoreError;
+
+    use crate::items;
 
     use super::StoredKeys;
 
-    // OSStatus values from Security/SecBase.h. security-framework-sys exports
-    // some of these but not all, so they are spelled out together rather than
-    // half imported and half written down.
-    const NOT_FOUND: i32 = -25300; // errSecItemNotFound
-    const NOT_AVAILABLE: i32 = -25291; // errSecNotAvailable
-    const AUTH_FAILED: i32 = -25293; // errSecAuthFailed
-    const USER_CANCELED: i32 = -128; // errSecUserCanceled
-
-    /// `Ok(None)` when the account has nothing stored. A missing item is an
-    /// ordinary answer here, not a failure, and saying so in the type is what
-    /// keeps a caller from treating it as one.
     pub(super) fn read(service: &str, account: &str) -> Result<Option<StoredKeys>, KeyStoreError> {
-        let options = PasswordOptions::new_generic_password(service, account);
-        let bytes = match generic_password(options) {
-            Ok(bytes) => bytes,
-            Err(e) if e.code() == NOT_FOUND => return Ok(None),
-            Err(e) => return Err(translate(e)),
+        let Some(bytes) = items::read(service, account)? else {
+            return Ok(None);
         };
         serde_json::from_slice(&bytes)
             .map(Some)
             .map_err(|e| KeyStoreError::Backend(format!("stored item is not readable: {e}")))
-    }
-
-    /// Attributes only, deliberately.
-    ///
-    /// It is asking for the data that makes the Keychain check the item's
-    /// access control and put a password dialog in front of the user. A match
-    /// on the attributes answers "is it there" without that.
-    pub(super) fn exists(service: &str, account: &str) -> Result<bool, KeyStoreError> {
-        let mut options = ItemSearchOptions::new();
-        options
-            .class(ItemClass::generic_password())
-            .service(service)
-            .account(account)
-            .load_attributes(true)
-            .limit(Limit::Max(1));
-
-        match options.search() {
-            Ok(found) => Ok(!found.is_empty()),
-            Err(e) if e.code() == NOT_FOUND => Ok(false),
-            Err(e) => Err(translate(e)),
-        }
     }
 
     pub(super) fn write(
@@ -210,77 +174,14 @@ mod platform {
     ) -> Result<(), KeyStoreError> {
         let bytes = serde_json::to_vec(keys)
             .map_err(|e| KeyStoreError::Backend(format!("cannot serialise keys: {e}")))?;
-
-        // Replacing means deleting first: SecItemAdd refuses a duplicate.
-        match delete_generic_password(service, account) {
-            Ok(()) => {}
-            Err(e) if e.code() == NOT_FOUND => {}
-            Err(e) => return Err(translate(e)),
-        }
-
-        // No `kSecAttrAccessControl`: an item carrying one goes to the data
-        // protection keychain, which refuses an app without the entitlement.
-        // The item lands in the login keychain instead, readable only by this
-        // signed app, and `presence` is what asks for Touch ID.
-        let options = PasswordOptions::new_generic_password(service, account);
-        set_generic_password_options(&bytes, options).map_err(translate)
+        items::write(service, account, &bytes)
     }
 
     pub(super) fn delete(service: &str, account: &str) -> Result<(), KeyStoreError> {
-        match delete_generic_password(service, account) {
-            Ok(()) => Ok(()),
-            Err(e) if e.code() == NOT_FOUND => Ok(()),
-            Err(e) => Err(translate(e)),
-        }
+        items::delete(service, account)
     }
 
-    /// Every caller decides for itself what a missing item means, so
-    /// `NOT_FOUND` never reaches here.
-    fn translate(error: security_framework::base::Error) -> KeyStoreError {
-        match error.code() {
-            USER_CANCELED => KeyStoreError::Cancelled,
-            // Touch ID refused, or the passcode was wrong. Distinct from a
-            // Mac that cannot authenticate at all, which is NOT_AVAILABLE.
-            AUTH_FAILED => KeyStoreError::AuthFailed,
-            NOT_AVAILABLE => KeyStoreError::AuthUnavailable,
-            code => KeyStoreError::Backend(match error.message() {
-                Some(message) => format!("keychain error {code}: {message}"),
-                None => format!("keychain error {code}"),
-            }),
-        }
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-mod platform {
-    use signer_core::keystore::KeyStoreError;
-
-    use super::StoredKeys;
-
-    fn unsupported() -> KeyStoreError {
-        KeyStoreError::Backend("the Keychain is only available on macOS".to_string())
-    }
-
-    pub(super) fn read(
-        _service: &str,
-        _account: &str,
-    ) -> Result<Option<StoredKeys>, KeyStoreError> {
-        Err(unsupported())
-    }
-
-    pub(super) fn exists(_service: &str, _account: &str) -> Result<bool, KeyStoreError> {
-        Ok(false)
-    }
-
-    pub(super) fn write(
-        _service: &str,
-        _account: &str,
-        _keys: &StoredKeys,
-    ) -> Result<(), KeyStoreError> {
-        Err(unsupported())
-    }
-
-    pub(super) fn delete(_service: &str, _account: &str) -> Result<(), KeyStoreError> {
-        Err(unsupported())
+    pub(super) fn exists(service: &str, account: &str) -> Result<bool, KeyStoreError> {
+        items::exists(service, account)
     }
 }
