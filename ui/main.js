@@ -258,8 +258,8 @@ function renderUnlock() {
   $("keychain-leftover").hidden = !(state.unlocked && state.hasKeychainCopies);
 
   $("touch-id-state").textContent = state.hasTouchId
-    ? "Your passphrase is in the Keychain, behind Touch ID. Turning this off deletes it and goes back to typing."
-    : "Your passphrase is not stored anywhere. Tick the box on the unlock screen to keep it behind Touch ID.";
+    ? "Your passphrase is in a file, and Touch ID is what stands in front of it. Anything that can read your files can open your keys. Turning this off deletes it and goes back to typing."
+    : "Your passphrase is not stored anywhere, so your keys are ciphertext at rest. Tick the box on the unlock screen to trade that for a Touch ID press.";
   $("forget-touch-id").hidden = !state.hasTouchId;
 }
 

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use macos_native::notifications::{self, NotificationApprover};
-use macos_native::{KeychainKeyStore, PassphraseStore};
+use macos_native::{passphrase, KeychainKeyStore, PassphraseStore};
 use nostr::key::Keys;
 use nostr::types::RelayUrl;
 use relay_transport::RelayTransport;
@@ -118,6 +118,7 @@ impl AppState {
         app: &AppHandle,
         storage: Storage,
         keys_dir: PathBuf,
+        passphrase_file: PathBuf,
         bundle_id: &str,
     ) -> Result<Self> {
         let storage = Arc::new(storage);
@@ -126,7 +127,12 @@ impl AppState {
 
         let keystore = Arc::new(FileKeyStore::new(keys_dir)?);
         let keychain = Arc::new(KeychainKeyStore::new(bundle_id));
-        let passphrases = Arc::new(PassphraseStore::new(bundle_id));
+
+        // An earlier version kept the passphrase in the Keychain, where every
+        // rebuild made the app a stranger to its own item. Nothing reads that
+        // item any more, so the only thing left to do with it is take it away.
+        passphrase::forget_keychain_copy(bundle_id);
+        let passphrases = Arc::new(PassphraseStore::new(passphrase_file));
         let approver = NotificationApprover::new();
         notifications::install(approver.clone());
 

@@ -59,6 +59,7 @@ pub fn run() -> Result<()> {
                 &handle,
                 storage,
                 paths::keys(&handle)?,
+                paths::unlock_passphrase(&handle)?,
                 &app.config().identifier,
             )?;
             app.manage(state);

@@ -26,6 +26,19 @@ pub fn keys(app: &AppHandle) -> Result<PathBuf> {
     Ok(dir.join("keys"))
 }
 
+/// `~/Library/Application Support/<bundle id>/unlock.passphrase`, where the
+/// passphrase lives when the user has asked to unlock with Touch ID.
+///
+/// Outside `keys` on purpose: everything in there is encrypted, and this is
+/// not.
+pub fn unlock_passphrase(app: &AppHandle) -> Result<PathBuf> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| anyhow!("no application data directory: {e}"))?;
+    Ok(dir.join("unlock.passphrase"))
+}
+
 /// `~/Library/Logs/Byrgi/byrgi.log`.
 ///
 /// Worked out from the home directory rather than asked of Tauri, because
