@@ -1,5 +1,5 @@
-//! Approval prompts delivered as notifications with Approve and Reject
-//! buttons.
+//! Approval prompts delivered as notifications with Approve, Always allow and
+//! Reject buttons.
 //!
 //! The pending-request registry is plain Rust and platform-independent, which
 //! matters: a notification can be suppressed by a Focus mode, so the window
@@ -153,6 +153,7 @@ impl Approver for NotificationApprover {
 /// both the category registration and the response handler.
 pub const CATEGORY: &str = "SIGN_REQUEST";
 pub const ACTION_APPROVE: &str = "APPROVE";
+pub const ACTION_ALWAYS: &str = "ALWAYS_ALLOW";
 pub const ACTION_REJECT: &str = "REJECT";
 
 /// Identifier of the "the signer is locked" notice.
@@ -195,7 +196,10 @@ mod platform {
     use signer_core::approval::{ApprovalDecision, ApprovalRequest};
     use std::sync::Arc;
 
-    use super::{NotificationApprover, RequestId, ACTION_APPROVE, ACTION_REJECT, CATEGORY, LOCKED};
+    use super::{
+        NotificationApprover, RequestId, ACTION_ALWAYS, ACTION_APPROVE, ACTION_REJECT, CATEGORY,
+        LOCKED,
+    };
 
     static APPROVER: OnceLock<Arc<NotificationApprover>> = OnceLock::new();
     static DELEGATE: OnceLock<Retained<ResponseHandler>> = OnceLock::new();
@@ -232,11 +236,12 @@ mod platform {
             return;
         };
 
-        // Approve from a notification is deliberately "once": granting a
-        // standing permission is a decision that deserves the window, where
-        // the user can see what they are agreeing to.
+        // Reject is once, not always: a client that asked for something odd
+        // one time should not lose the ability to ask again because the answer
+        // was given from a banner. Saying no forever is in the window.
         let decision = match action.as_str() {
             ACTION_APPROVE => ApprovalDecision::allow_once(),
+            ACTION_ALWAYS => ApprovalDecision::allow_always(),
             ACTION_REJECT => ApprovalDecision::deny(),
             // The default action is a tap on the body, which opens the window
             // rather than deciding anything.
@@ -261,13 +266,22 @@ mod platform {
             &NSString::from_str("Approve"),
             UNNotificationActionOptions::empty(),
         );
+        let always = UNNotificationAction::actionWithIdentifier_title_options(
+            &NSString::from_str(ACTION_ALWAYS),
+            &NSString::from_str("Always allow"),
+            UNNotificationActionOptions::empty(),
+        );
         let reject = UNNotificationAction::actionWithIdentifier_title_options(
             &NSString::from_str(ACTION_REJECT),
             &NSString::from_str("Reject"),
             UNNotificationActionOptions::Destructive,
         );
 
-        let actions = NSArray::from_retained_slice(&[approve, reject]);
+        // Order matters. A banner shows the first action as its button and
+        // folds the rest into the Options menu, so Approve is first: it is the
+        // answer most requests get, and it is the one that should not need a
+        // second click. An alert shows all three.
+        let actions = NSArray::from_retained_slice(&[approve, always, reject]);
         let category =
             UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
                 &NSString::from_str(CATEGORY),
