@@ -321,6 +321,7 @@ pub fn prompts(state: State<'_, AppState>) -> CommandResult<Vec<PromptView>> {
             client_name: pending.request.client_name,
             client_public_key: pending.request.client_public_key.to_hex(),
             detail: pending.request.detail,
+            preview: pending.request.preview,
             method: pending.request.scope.method.to_string(),
             kind: pending.request.scope.kind.map(|k| k.as_u16()),
             kind_name: pending.request.scope.kind.and_then(kinds::name),

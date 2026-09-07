@@ -19,6 +19,11 @@ const state = {
   pinned: false,
   busy: 0,
   savingAccount: false,
+  scanning: false,
+  preparingScan: false,
+  connectingScan: false,
+  scanGeneration: 0,
+  scanLastTab: "home",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -156,23 +161,49 @@ async function refreshPrompts() {
   syncPinned();
 
   const box = $("prompts");
+  // Polling must not collapse details or reset a preview while it is being read.
+  const fingerprint = JSON.stringify(prompts);
+  if (refreshPrompts.last === fingerprint) return;
+  refreshPrompts.last = fingerprint;
   box.replaceChildren();
   box.hidden = prompts.length === 0;
   $("pending-summary").textContent =
     prompts.length === 0 ? "" : `${prompts.length} waiting`;
 
   for (const prompt of prompts) {
-    const who = prompt.client_name ?? shorten(prompt.client_public_key);
+    const who = prompt.client_name || "An app";
     const row = el("div", "prompt");
     row.append(
       el("div", "what", `${who} wants to ${prompt.detail}`),
-      el("div", "mono", `${prompt.account_label} · ${prompt.method}`),
+      el("div", "hint", `Using ${prompt.account_label}`),
     );
+
+    const preview = prompt.preview;
+    if (preview?.explanation) row.append(el("p", "hint", preview.explanation));
+    for (const field of preview?.fields ?? []) {
+      const item = el("div", "request-field");
+      item.append(el("span", "muted", `${field.label}: `), el("span", null, field.value));
+      row.append(item);
+    }
+    if (preview?.content) row.append(el("blockquote", "request-preview", preview.content));
+    const details = el("details", "request-details");
+    details.append(
+      el("summary", null, "Technical details"),
+      el("div", "mono", `Method: ${prompt.method}`),
+      el("div", "mono", `Client key: ${prompt.client_public_key}`),
+    );
+    if (prompt.kind !== null && prompt.kind !== undefined) {
+      details.append(el("div", "mono", `Event kind: ${prompt.kind}${prompt.kind_name ? ` (${prompt.kind_name})` : ""}`));
+    }
+    row.append(details);
 
     const buttons = el("div", "buttons");
     const once = el("button", "primary", "Allow once");
     once.onclick = () => answer(prompt.id, true, false);
     const always = el("button", null, "Always allow");
+    always.title = prompt.kind === null || prompt.kind === undefined
+      ? "Allow future requests for this method from this client."
+      : `Allow future kind ${prompt.kind} requests from this client, including different content or destinations.`;
     always.onclick = () => answer(prompt.id, true, true);
     const deny = el("button", "danger", "Deny");
     deny.onclick = () => answer(prompt.id, false, false);
@@ -579,7 +610,7 @@ async function refreshRules() {
 
   for (const rule of rules) {
     const card = el("div", "card");
-    const what = el("span", "grow", scopeLabel(rule.method, rule.kind, rule.kind_name));
+    const what = el("span", "grow", rule.description || scopeLabel(rule.method, rule.kind, rule.kind_name));
     what.title = scopeTitle(rule.method, rule.kind);
     card.append(
       what,
@@ -642,7 +673,7 @@ async function refreshActivity(append = false) {
   for (const entry of entries) {
     const card = el("div", "card");
     const grow = el("div", "grow");
-    const what = el("div", null, scopeLabel(entry.method, entry.kind, entry.kind_name));
+    const what = el("div", null, entry.description || scopeLabel(entry.method, entry.kind, entry.kind_name));
     what.title = scopeTitle(entry.method, entry.kind);
     grow.append(what, el("div", "mono", `${when(entry.at)} · ${entry.source}`));
     card.append(
@@ -707,7 +738,147 @@ async function saveAccount(importing) {
   }
 }
 
+function clearScan() {
+  state.scanGeneration += 1;
+  $("scan-results").replaceChildren();
+  $("scan-status").textContent = "";
+  $("scan-input").hidden = false;
+}
+
+async function prepareScanner() {
+  if (state.preparingScan) return;
+  state.preparingScan = true;
+  let screenAllowed = false;
+  const generation = state.scanGeneration;
+  $("scan-screen").disabled = true;
+  $("scan-clipboard").disabled = true;
+  try {
+    // Give the scanner panel a frame to appear before macOS opens its prompt.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (state.tab !== "scan" || state.scanGeneration !== generation) return;
+    const allowed = await call("prepare_scan");
+    screenAllowed = allowed;
+    if (state.tab !== "scan" || state.scanGeneration !== generation) return;
+    $("scan-status").textContent = allowed ? ""
+      : "For screen selection, allow Byrgi in System Settings → Privacy & Security → Screen Recording. You can still paste an image.";
+  } catch (error) {
+    if (state.tab === "scan" && state.scanGeneration === generation) $("scan-status").textContent = String(error);
+  } finally {
+    state.preparingScan = false;
+    $("scan-screen").disabled = false;
+    $("scan-clipboard").disabled = false;
+    if (state.tab === "scan" && state.scanGeneration === generation) {
+      $(screenAllowed ? "scan-screen" : "scan-clipboard").focus();
+    }
+  }
+}
+
+function toggleScanner() {
+  if (state.tab === "scan") {
+    if (state.scanning || state.connectingScan) return;
+    selectTab(state.scanLastTab);
+    $("scan-toggle").focus();
+  } else {
+    state.scanLastTab = state.tab;
+    selectTab("scan");
+    $("scan-screen").focus();
+    prepareScanner();
+  }
+}
+
+async function connectScannedClient(uri, button) {
+  if (state.connectingScan) return;
+  if (state.account === null) return toast("Add an account in Settings first.");
+  if (!state.unlocked) return toast("Unlock Byrgi above before connecting.");
+  state.connectingScan = true;
+  button.disabled = true;
+  button.textContent = "Connecting…";
+  try {
+    const paired = await call("pair_client", { account: state.account, uri });
+    clearScan();
+    selectTab("clients");
+    toast(`Connected ${paired.client_name || shorten(paired.client_public_key)}.`);
+    await refreshAll();
+  } catch {
+    // The command reports failures; retain the result so the user can retry.
+  } finally {
+    state.connectingScan = false;
+    button.disabled = false;
+    button.textContent = "Connect";
+  }
+}
+
+function renderScannedCodes(codes) {
+  const list = $("scan-results");
+  list.replaceChildren();
+  $("scan-input").hidden = codes.length > 0;
+  for (const raw of codes) {
+    const result = ByrgiQR.describe(raw);
+    const card = el("div", "card stack");
+    const title = el("h2", "scan-result-title", result.title);
+    const hint = el("p", "hint", result.hint);
+    if (result.action === "pair") {
+      const connect = el("button", "primary", "Connect");
+      connect.onclick = () => connectScannedClient(result.value, connect);
+      card.append(title, hint, connect);
+      list.append(card);
+      if (list.children.length === 1) connect.focus();
+      continue;
+    }
+    const content = el("textarea", "scan-content mono");
+    content.readOnly = true;
+    content.spellcheck = false;
+    content.setAttribute("aria-label", `${result.title} content`);
+    content.hidden = true;
+    const actions = el("div", "row");
+    const reveal = el("button", "ghost", "Show content");
+    reveal.setAttribute("aria-expanded", "false");
+    reveal.onclick = () => {
+      content.hidden = !content.hidden;
+      content.value = content.hidden ? "" : raw;
+      reveal.textContent = content.hidden ? "Show content" : "Hide content";
+      reveal.setAttribute("aria-expanded", String(!content.hidden));
+    };
+    const copyButton = el("button", "ghost", "Copy");
+    copyButton.onclick = () => copy(raw, copyButton);
+    actions.append(reveal, copyButton);
+    card.append(title, hint, content, actions);
+    list.append(card);
+    if (list.children.length === 1) reveal.focus();
+  }
+}
+
+async function scanQR(source) {
+  if (state.scanning || state.preparingScan || state.connectingScan) return;
+  clearScan();
+  const generation = state.scanGeneration;
+  state.scanning = true;
+  for (const id of ["scan-screen", "scan-clipboard"]) $(id).disabled = true;
+  $("scan-status").textContent = source === "screen"
+    ? "Select an area around the QR code. Press Esc to cancel."
+    : "Reading the clipboard image…";
+  try {
+    const codes = await call(source === "screen" ? "scan_screen" : "scan_clipboard");
+    if (state.tab !== "scan" || state.scanGeneration !== generation) return;
+    if (codes === null) {
+      $("scan-status").textContent = "Scan cancelled.";
+    } else {
+      renderScannedCodes(codes);
+      $("scan-status").textContent = codes.length === 1 ? "" : `${codes.length} QR codes found. Choose one below.`;
+    }
+  } catch (error) {
+    if (state.tab === "scan" && state.scanGeneration === generation) {
+      $("scan-status").textContent = String(error);
+    }
+  } finally {
+    state.scanning = false;
+    for (const id of ["scan-screen", "scan-clipboard"]) $(id).disabled = false;
+    if (state.tab === "scan" && !$("scan-input").hidden) $(source === "screen" ? "scan-screen" : "scan-clipboard").focus();
+  }
+}
+
 function selectTab(name) {
+  if (state.tab === "scan" && name !== "scan") clearScan();
   if (state.tab === "settings" && name !== "settings") showAccountForm(false);
   state.tab = name;
   for (const tab of document.querySelectorAll(".tab")) {
@@ -719,6 +890,7 @@ function selectTab(name) {
   // Settings is reached by the gear, so no tab lights up while it is open and
   // the gear has to say where you are instead.
   $("settings-toggle").setAttribute("aria-pressed", String(name === "settings"));
+  $("scan-toggle").setAttribute("aria-pressed", String(name === "scan"));
   $("scroll").scrollTop = 0;
 }
 
@@ -745,6 +917,14 @@ async function refreshAll() {
 }
 
 function wire() {
+  $("scan-toggle").onclick = toggleScanner;
+  $("scan-screen").onclick = () => scanQR("screen");
+  $("scan-clipboard").onclick = () => scanQR("clipboard");
+  document.addEventListener("paste", (event) => {
+    if (state.tab !== "scan" || event.target?.matches("input, textarea")) return;
+    event.preventDefault();
+    scanQR("clipboard");
+  });
   for (const tab of document.querySelectorAll(".tab")) {
     tab.onclick = () => selectTab(tab.dataset.tab);
   }
@@ -799,9 +979,17 @@ function wire() {
     syncPinned();
   };
 
-  $("close").onclick = () => invoke("hide_window").catch(() => {});
+  $("close").onclick = () => {
+    clearScan();
+    invoke("hide_window").catch(() => {});
+  };
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.tab === "scan") {
+      event.preventDefault();
+      toggleScanner();
+      return;
+    }
     if (event.key === "Escape" && !state.pinned) {
       invoke("hide_window").catch(() => {});
     }

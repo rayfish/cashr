@@ -13,6 +13,7 @@
         <select id="account-picker" class="picker" title="Active account"></select>
       </span>
       <button id="lock-toggle" class="icon" title="Unlock">Unlock</button>
+      <button id="scan-toggle" class="icon" title="Scan a QR code" aria-label="Scan a QR code" aria-pressed="false">Scan QR</button>
       <button id="settings-toggle" class="icon" title="Settings" aria-label="Settings" aria-pressed="false">
         <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path
@@ -71,6 +72,21 @@
     </nav>
 
     <main id="scroll">
+      <section id="tab-scan" class="panel" aria-labelledby="scan-heading">
+        <div class="settings-heading">
+          <h1 id="scan-heading">Scan QR code</h1>
+        </div>
+        <div id="scan-input">
+        <p class="hint">Select a QR code on your screen, or copy an image and paste it here. Images are decoded on your Mac.</p>
+        <div class="split">
+          <button id="scan-screen" class="primary">Select screen area</button>
+          <button id="scan-clipboard">Paste image</button>
+        </div>
+        <p class="hint">Screen selection needs Screen Recording permission. Press Esc to cancel the selection. You can also use ⌘V here to scan a copied image.</p>
+        </div>
+        <p id="scan-status" class="hint" role="status" aria-live="polite"></p>
+        <div id="scan-results" class="list"></div>
+      </section>
       <section id="tab-home" class="panel is-active">
         <div id="account-card" class="card stack"></div>
 
@@ -167,6 +183,7 @@
     </footer>
 
     <div id="toast" class="toast" hidden></div>
+    <script src="qr.js"></script>
     <script src="main.js"></script>
   </body>
 </html>

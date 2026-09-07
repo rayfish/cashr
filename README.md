@@ -5,6 +5,8 @@ with clients. *Byrgi* is Icelandic for a shelter or enclosed place—a bunker.
 
 - Create or import accounts in **Settings**.
 - Pair clients using `bunker://` or `nostrconnect://` links.
+- Scan QR codes from a screen selection or clipboard image using **Scan QR**.
+  Decoding stays on your Mac; choose **Connect** to pair a scanned client link.
 - Approve requests in the app or through notifications, with optional saved
   permissions per client, method, and event kind.
 - Manage connected clients, relays, and request history.
@@ -47,6 +49,11 @@ a Developer ID certificate and notarization; `APPLE_SIGNING_IDENTITY` overrides
 the local signing identity.
 
 Run `just check` for formatting, linting, and tests, or `just --list` for all tasks.
+Scanner UI tests run with `node --test ui/tests/qr.test.cjs`.
+
+Opening **Scan QR** requests Screen Recording permission if needed.
+Clipboard image scanning does not need screen access. Lightning and Cashu QR
+codes can be read and copied; payments and wallet connections are not implemented.
 
 ## Key storage
 

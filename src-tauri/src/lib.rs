@@ -4,6 +4,7 @@
 
 mod commands;
 mod paths;
+mod scan;
 mod state;
 mod tray;
 mod views;
@@ -117,6 +118,9 @@ pub fn run() -> Result<()> {
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
+            scan::scan_screen,
+            scan::prepare_scan,
+            scan::scan_clipboard,
             commands::status,
             commands::unlock,
             commands::lock,

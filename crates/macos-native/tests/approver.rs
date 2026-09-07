@@ -21,6 +21,7 @@ fn request() -> ApprovalRequest {
         client_name: Some("Some App".to_string()),
         scope: Scope::sign_event(Kind::TextNote),
         detail: "sign a kind 1 event".to_string(),
+        preview: Default::default(),
         requested_at: Timestamp::now(),
     }
 }

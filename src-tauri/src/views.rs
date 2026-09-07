@@ -7,6 +7,7 @@ use nostr::nips::nip19::ToBech32;
 use nostr::nips::nip46::NostrConnectMethod;
 use serde::Serialize;
 use signer_core::account::Account;
+use signer_core::approval::{describe, RequestPreview};
 use signer_core::client::Client;
 use signer_core::kinds;
 use signer_core::policy::{Decision, Rule, Scope};
@@ -63,6 +64,7 @@ impl From<&Client> for ClientView {
 
 #[derive(Debug, Serialize)]
 pub struct RuleView {
+    pub description: String,
     pub method: String,
     /// `null` means the rule covers every kind for that method.
     pub kind: Option<u16>,
@@ -75,6 +77,7 @@ pub struct RuleView {
 impl From<&Rule> for RuleView {
     fn from(rule: &Rule) -> Self {
         Self {
+            description: describe(rule.scope, rule.scope.kind),
             method: rule.scope.method.to_string(),
             kind: rule.scope.kind.map(|k| k.as_u16()),
             kind_name: rule.scope.kind.and_then(kinds::name),
@@ -85,6 +88,7 @@ impl From<&Rule> for RuleView {
 
 #[derive(Debug, Serialize)]
 pub struct ActivityView {
+    pub description: String,
     pub id: i64,
     pub client: Option<i64>,
     pub method: String,
@@ -99,6 +103,13 @@ pub struct ActivityView {
 impl From<&ActivityEntry> for ActivityView {
     fn from(entry: &ActivityEntry) -> Self {
         Self {
+            description: describe(
+                Scope {
+                    method: entry.method,
+                    kind: entry.kind,
+                },
+                entry.kind,
+            ),
             id: entry.id,
             client: entry.client.map(|c| c.get()),
             method: entry.method.to_string(),
@@ -138,6 +149,7 @@ pub struct PromptView {
     pub client_name: Option<String>,
     pub client_public_key: String,
     pub detail: String,
+    pub preview: RequestPreview,
     pub method: String,
     pub kind: Option<u16>,
     pub kind_name: Option<&'static str>,

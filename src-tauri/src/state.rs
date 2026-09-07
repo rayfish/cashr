@@ -371,7 +371,7 @@ impl AppState {
 
     /// Take an existing key. Accepts nsec or hex.
     pub async fn import_account(&self, label: String, secret: &str) -> Result<Account> {
-        Ok(self.add_account(label, Keys::parse(secret)?).await?)
+        self.add_account(label, Keys::parse(secret)?).await
     }
 
     async fn add_account(&self, label: String, identity: Keys) -> Result<Account> {

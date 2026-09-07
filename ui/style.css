@@ -55,9 +55,27 @@ body {
 }
 
 input,
+textarea,
 .mono,
 .output {
   user-select: text;
+}
+
+.scan-content {
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.scan-result-title {
+  margin: 0;
 }
 
 /* ------------------------------------------------------------------- bars */
@@ -417,6 +435,33 @@ button.plus[aria-expanded="true"] {
 
 .prompt .what {
   font-weight: 550;
+}
+
+.request-field,
+.request-details {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.request-details {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.request-details summary {
+  cursor: pointer;
+}
+
+.request-preview {
+  margin: 8px 0;
+  padding: 6px 9px;
+  border-left: 2px solid var(--accent);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  max-height: 110px;
+  overflow-y: auto;
 }
 
 .prompt .buttons {

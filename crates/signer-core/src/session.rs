@@ -17,7 +17,7 @@ use nostr::types::Timestamp;
 use tokio::time::{timeout, Instant};
 
 use crate::account::{Account, AccountId};
-use crate::approval::{describe, ApprovalRequest, Approver, Notifier, SignerEvent};
+use crate::approval::{describe, ApprovalRequest, Approver, Notifier, RequestPreview, SignerEvent};
 use crate::client::{Client, ClientId, PairingDirection};
 use crate::error::{Result, SignerError};
 use crate::keystore::KeyStore;
@@ -303,7 +303,7 @@ impl Session {
         }
 
         let scope = scope_for(&request);
-        let decision = self.authorize(account, &client, scope).await?;
+        let decision = self.authorize(account, &client, scope, &request).await?;
         if decision == Decision::Deny {
             return Err(SignerError::Denied);
         }
@@ -377,6 +377,7 @@ impl Session {
         account: &Account,
         client: &Client,
         scope: Scope,
+        request: &NostrConnectRequest,
     ) -> Result<Decision> {
         match self.storage.policy_set(client.id)?.evaluate(scope) {
             Outcome::Allow => {
@@ -399,11 +400,17 @@ impl Session {
                 )?;
                 Ok(Decision::Deny)
             }
-            Outcome::Prompt => self.prompt(account, client, scope).await,
+            Outcome::Prompt => self.prompt(account, client, scope, request).await,
         }
     }
 
-    async fn prompt(&self, account: &Account, client: &Client, scope: Scope) -> Result<Decision> {
+    async fn prompt(
+        &self,
+        account: &Account,
+        client: &Client,
+        scope: Scope,
+        operation: &NostrConnectRequest,
+    ) -> Result<Decision> {
         let request = ApprovalRequest {
             account: account.id,
             account_label: account.label.clone(),
@@ -412,6 +419,7 @@ impl Session {
             client_name: client.name.clone(),
             scope,
             detail: describe(scope, scope.kind),
+            preview: RequestPreview::from_request(operation),
             requested_at: Timestamp::now(),
         };
 
