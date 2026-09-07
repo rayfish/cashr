@@ -18,7 +18,7 @@ use tokio::time::{timeout, Instant};
 
 use crate::account::{Account, AccountId};
 use crate::approval::{describe, ApprovalRequest, Approver, Notifier, SignerEvent};
-use crate::client::{Client, PairingDirection};
+use crate::client::{Client, ClientId, PairingDirection};
 use crate::error::{Result, SignerError};
 use crate::keystore::KeyStore;
 use crate::pairing::random_hex;
@@ -261,17 +261,23 @@ impl Session {
             secret,
         } = &request
         {
-            return self
+            let paired = self
                 .connect(account, sender, remote_signer_public_key, secret.as_deref())
                 .await;
+            if let Err(error) = &paired {
+                self.record_refusal(account.id, None, method, error);
+            }
+            return paired;
         }
 
-        let client = self
-            .storage
-            .client_by_public_key(account.id, sender)?
-            .ok_or(SignerError::UnknownClient)?;
+        let Some(client) = self.storage.client_by_public_key(account.id, sender)? else {
+            self.record_refusal(account.id, None, method, &SignerError::UnknownClient);
+            return Err(SignerError::UnknownClient);
+        };
         if client.is_revoked() {
-            return Err(SignerError::ClientRevoked);
+            let error = SignerError::ClientRevoked;
+            self.record_refusal(account.id, Some(client.id), method, &error);
+            return Err(error);
         }
         self.storage.touch_client(client.id)?;
 
@@ -482,6 +488,32 @@ impl Session {
                 return Err(SignerError::InvalidRequest("connect out of order"))
             }
         })
+    }
+
+    /// Note a request turned away before any decision could be made.
+    ///
+    /// Without this a client being refused every time leaves nothing behind.
+    /// The window shows an idle signer, the user sees their app fail, and the
+    /// two never meet. A refusal is exactly the thing worth a row.
+    fn record_refusal(
+        &self,
+        account: AccountId,
+        client: Option<ClientId>,
+        method: NostrConnectMethod,
+        error: &SignerError,
+    ) {
+        let recorded = self.storage.record_activity(NewActivity {
+            account,
+            client,
+            method,
+            kind: None,
+            outcome: ActivityOutcome::Failed,
+            source: ActivitySource::Error,
+            detail: Some(error.to_string()),
+        });
+        if let Err(error) = recorded {
+            tracing::warn!("could not record a refusal: {error}");
+        }
     }
 
     fn record(
