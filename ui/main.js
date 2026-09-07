@@ -18,6 +18,7 @@ const state = {
   health: [],
   pinned: false,
   busy: 0,
+  savingAccount: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -259,10 +260,13 @@ function renderUnlock() {
   // Only worth offering once the keys are safely somewhere else.
   $("keychain-leftover").hidden = !(state.unlocked && state.hasKeychainCopies);
 
+  $("touch-id-badge").textContent = state.hasTouchId ? "Enabled" : "Off";
+  $("touch-id-badge").className = `pill ${state.hasTouchId ? "is-allow" : ""}`;
   $("touch-id-state").textContent = state.hasTouchId
-    ? "Your passphrase is in a file, and Touch ID is what stands in front of it. Anything that can read your files can open your keys. Turning this off deletes it and goes back to typing."
-    : "Your passphrase is not stored anywhere, so your keys are ciphertext at rest. Tick the box on the unlock screen to trade that for a Touch ID press.";
+    ? "Unlock with Touch ID using a passphrase saved on this Mac. Anyone who can read that file can open your keys. Turning this off removes the saved passphrase."
+    : "Unlock with your passphrase. To enable Touch ID, select “Unlock with Touch ID next time” when unlocking. This saves your passphrase on this Mac.";
   $("forget-touch-id").hidden = !state.hasTouchId;
+  syncAccountForm();
 }
 
 /// Unlock by asking the Keychain for the passphrase, behind Touch ID.
@@ -358,9 +362,18 @@ function renderAccountCard() {
   card.replaceChildren();
   const account = currentAccount();
 
-  card.className = account ? "card stack" : "empty";
+  card.className = "card stack";
   if (!account) {
-    card.textContent = "No account yet. Add one below.";
+    const add = el("button", "primary start", "Add account in Settings");
+    add.onclick = () => {
+      if (state.tab !== "settings") toggleSettings();
+      showAccountForm(true);
+    };
+    card.append(
+      el("div", "title", "Add your first account"),
+      empty("Create a new identity or import an existing private key to get started."),
+      add,
+    );
     return;
   }
 
@@ -387,7 +400,7 @@ function renderAccountList() {
   const list = $("account-list");
   list.replaceChildren();
   if (state.accounts.length === 0) {
-    list.append(empty("No accounts."));
+    list.append(empty("No accounts yet. Add one to get started."));
     return;
   }
 
@@ -400,7 +413,7 @@ function renderAccountList() {
     if (account.is_default) {
       card.append(el("span", "pill", "default"));
     } else {
-      const makeDefault = el("button", null, "Default");
+      const makeDefault = el("button", null, "Make default");
       makeDefault.onclick = async () => {
         await call("set_default_account", { account: account.id });
         await refreshStatus();
@@ -645,7 +658,57 @@ async function refreshActivity(append = false) {
 
 // ------------------------------------------------------------------- wiring
 
+function syncAccountForm() {
+  const busy = state.savingAccount;
+  $("account-create").disabled = busy || !state.unlocked;
+  $("account-import").disabled = busy || !state.unlocked;
+  $("account-label").disabled = busy;
+  $("account-secret").disabled = busy;
+  $("account-cancel").disabled = busy;
+  $("account-add").disabled = busy;
+  $("account-locked-hint").hidden = state.unlocked;
+}
+
+function showAccountForm(shown) {
+  $("account-new").hidden = !shown;
+  $("account-add").setAttribute("aria-expanded", String(shown));
+  if (shown) {
+    $("account-label").focus();
+  } else {
+    $("account-label").value = "";
+    $("account-secret").value = "";
+  }
+}
+
+async function saveAccount(importing) {
+  if (state.savingAccount || !state.unlocked) return;
+  const label = $("account-label").value.trim() || (importing ? "Imported" : "Account");
+  const secret = $("account-secret").value.trim();
+  if (importing && !secret) {
+    $("account-secret").focus();
+    return;
+  }
+  const button = $(importing ? "account-import" : "account-create");
+  const originalLabel = button.textContent;
+  state.savingAccount = true;
+  button.textContent = importing ? "Importing…" : "Creating…";
+  syncAccountForm();
+  try {
+    await call(importing ? "import_account" : "create_account", importing ? { label, secret } : { label });
+    showAccountForm(false);
+    await refreshAll();
+  } catch {
+    // `call` reports the error; keep the form available for correction.
+  } finally {
+    state.savingAccount = false;
+    button.textContent = originalLabel;
+    syncAccountForm();
+    if (state.tab === "settings" && $("account-new").hidden) $("account-add").focus();
+  }
+}
+
 function selectTab(name) {
+  if (state.tab === "settings" && name !== "settings") showAccountForm(false);
   state.tab = name;
   for (const tab of document.querySelectorAll(".tab")) {
     tab.classList.toggle("is-active", tab.dataset.tab === name);
@@ -687,6 +750,10 @@ function wire() {
   }
 
   $("settings-toggle").onclick = () => toggleSettings();
+  $("settings-done").onclick = () => {
+    toggleSettings();
+    $("settings-toggle").focus();
+  };
 
   $("account-picker").onchange = async (event) => {
     state.account = Number(event.target.value);
@@ -740,32 +807,13 @@ function wire() {
     }
   });
 
-  const showAccountForm = (shown) => {
-    $("account-new").hidden = !shown;
-    $("account-add").setAttribute("aria-expanded", String(shown));
-    if (shown) $("account-label").focus();
-  };
-
   $("account-add").onclick = () => showAccountForm($("account-new").hidden);
-
-  $("account-create").onclick = async () => {
-    const label = $("account-label").value.trim() || "Account";
-    await call("create_account", { label });
-    $("account-label").value = "";
+  $("account-cancel").onclick = () => {
     showAccountForm(false);
-    await refreshAll();
+    $("account-add").focus();
   };
-
-  $("account-import").onclick = async () => {
-    const label = $("account-label").value.trim() || "Imported";
-    const secret = $("account-secret").value.trim();
-    if (!secret) return;
-    await call("import_account", { label, secret });
-    $("account-secret").value = "";
-    $("account-label").value = "";
-    showAccountForm(false);
-    await refreshAll();
-  };
+  $("account-create").onclick = () => saveAccount(false);
+  $("account-import").onclick = () => saveAccount(true);
 
   $("relay-add").onclick = async () => {
     const account = currentAccount();

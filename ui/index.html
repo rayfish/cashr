@@ -13,12 +13,12 @@
         <select id="account-picker" class="picker" title="Active account"></select>
       </span>
       <button id="lock-toggle" class="icon" title="Unlock">Unlock</button>
-      <button id="settings-toggle" class="icon" title="Settings" aria-pressed="false">
-        <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true">
+      <button id="settings-toggle" class="icon" title="Settings" aria-label="Settings" aria-pressed="false">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path
-            fill="currentColor"
-            d="M6.94 1h2.12l.3 1.66a5 5 0 0 1 1.2.7l1.58-.6 1.06 1.84-1.28 1.08a5 5 0 0 1 0 1.4l1.28 1.08-1.06 1.84-1.58-.6a5 5 0 0 1-1.2.7L9.06 15H6.94l-.3-1.66a5 5 0 0 1-1.2-.7l-1.58.6-1.06-1.84 1.28-1.08a5 5 0 0 1 0-1.4L2.8 7.84 3.86 6l1.58.6a5 5 0 0 1 1.2-.7L6.94 1Zm1.06 4.9a2.1 2.1 0 1 0 0 4.2 2.1 2.1 0 0 0 0-4.2Z"
+            d="M9.23 5.30 10.37 4.94 10.51 2.62 13.49 2.62 13.63 4.94 14.77 5.30 15.84 5.85 17.58 4.31 19.69 6.42 18.15 8.16 18.70 9.23 19.06 10.37 21.38 10.51 21.38 13.49 19.06 13.63 18.70 14.77 18.15 15.84 19.69 17.58 17.58 19.69 15.84 18.15 14.77 18.70 13.63 19.06 13.49 21.38 10.51 21.38 10.37 19.06 9.23 18.70 8.16 18.15 6.42 19.69 4.31 17.58 5.85 15.84 5.30 14.77 4.94 13.63 2.62 13.49 2.62 10.51 4.94 10.37 5.30 9.23 5.85 8.16 4.31 6.42 6.42 4.31 8.16 5.85Z"
           />
+          <circle cx="12" cy="12" r="3.25" />
         </svg>
       </button>
       <button id="pin-toggle" class="icon" title="Keep the window open" aria-pressed="false">
@@ -92,38 +92,6 @@
           <button id="relay-add">Add</button>
         </div>
 
-        <div class="head">
-          <h2>Accounts</h2>
-          <button
-            id="account-add"
-            class="icon plus"
-            title="Add an account"
-            aria-expanded="false"
-            aria-controls="account-new"
-          >
-            +
-          </button>
-        </div>
-        <div id="account-list" class="list"></div>
-        <div id="account-new" hidden>
-          <div class="row">
-            <input id="account-label" type="text" placeholder="Label" />
-            <button id="account-create" class="primary">New key</button>
-          </div>
-          <div class="row">
-            <input
-              id="account-secret"
-              type="password"
-              placeholder="nsec1… or hex"
-              spellcheck="false"
-            />
-            <button id="account-import">Import</button>
-          </div>
-          <p class="hint">
-            An imported key is encrypted with your passphrase and written to a
-            key file. It never goes in the database.
-          </p>
-        </div>
       </section>
 
       <section id="tab-clients" class="panel">
@@ -141,11 +109,54 @@
       </section>
 
       <section id="tab-settings" class="panel">
-        <h2>Unlocking</h2>
-        <p id="touch-id-state" class="hint"></p>
-        <button id="forget-touch-id" class="danger" hidden>
-          Stop unlocking with Touch ID
-        </button>
+        <div class="settings-heading">
+          <h1>Settings</h1>
+          <button id="settings-done" class="ghost">Done</button>
+        </div>
+        <section class="settings-section" aria-labelledby="accounts-heading">
+          <div class="settings-heading">
+            <h2 id="accounts-heading">Accounts</h2>
+            <button id="account-add" aria-expanded="false" aria-controls="account-new">
+              Add account
+            </button>
+          </div>
+          <p class="hint">Manage your identities. Switch accounts using the menu at the top.</p>
+          <div id="account-list" class="list"></div>
+          <div id="account-new" class="account-form" hidden>
+            <label for="account-label">Account name</label>
+            <input id="account-label" type="text" placeholder="e.g. Personal" autocomplete="off" />
+            <p id="account-locked-hint" class="hint" hidden>Unlock Byrgi above before creating or importing an account.</p>
+            <button id="account-create" class="primary">Create new account</button>
+            <div class="import-fields">
+              <label for="account-secret">Or import an existing private key</label>
+              <input
+                id="account-secret"
+                type="password"
+                placeholder="nsec1… or hex"
+                spellcheck="false"
+                autocomplete="off"
+                autocapitalize="off"
+                aria-describedby="account-key-hint"
+              />
+              <p id="account-key-hint" class="hint">Your key is encrypted with your passphrase and stored on this Mac.</p>
+              <button id="account-import">Import account</button>
+            </div>
+            <button id="account-cancel" class="ghost start">Cancel</button>
+          </div>
+        </section>
+        <section class="settings-section" aria-labelledby="security-heading">
+          <h2 id="security-heading">Security</h2>
+          <div class="card stack">
+            <div class="card-head">
+              <span class="grow title">Touch ID</span>
+              <span id="touch-id-badge" class="pill"></span>
+            </div>
+            <p id="touch-id-state" class="hint"></p>
+            <button id="forget-touch-id" class="danger start" hidden>
+              Stop unlocking with Touch ID
+            </button>
+          </div>
+        </section>
       </section>
     </main>
 
