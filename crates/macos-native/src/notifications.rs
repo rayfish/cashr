@@ -206,7 +206,7 @@ mod platform {
 
     define_class!(
         #[unsafe(super(NSObject))]
-        #[name = "NostrTrayNotificationDelegate"]
+        #[name = "ByrgiNotificationDelegate"]
         struct ResponseHandler;
 
         unsafe impl NSObjectProtocol for ResponseHandler {}

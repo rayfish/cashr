@@ -61,7 +61,7 @@ Apple Developer Program plus notarization and stapling. Nothing in the project
 blocks that: set `APPLE_SIGNING_IDENTITY` to the Developer ID instead, and add
 the notarization credentials the Tauri CLI reads.
 
-The bundle identifier `dgrr.tray.byrgi` names the application support
+The bundle identifier `com.dgrr.byrgi` names the application support
 directory and the notification registration. Changing it orphans every stored
 key.
 
@@ -72,7 +72,7 @@ events. The transport key is what the bunker listens on, so relay operators do
 not get a log of which apps connect to which npub.
 
 Both are stored as NIP-49 `ncryptsec` strings, in one file per account under
-`~/Library/Application Support/dgrr.tray.byrgi/keys`. The passphrase you type
+`~/Library/Application Support/com.dgrr.byrgi/keys`. The passphrase you type
 at unlock is what scrypt turns into the key that opens them, and it is held in
 memory until you lock. Nothing on disk is readable without it, so a backup, a
 synced folder or a stolen laptop yields ciphertext.
