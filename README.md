@@ -1,153 +1,68 @@
 # Byrgi
 
-A macOS menu bar NIP-46 signer. *Byrgi* is Icelandic for a shelter, an
-enclosed place: a bunker, which is what NIP-46 calls this.
+A macOS menu bar app that signs Nostr events without sharing your private keys
+with clients. *Byrgi* is Icelandic for a shelter or enclosed place—a bunker.
 
-Keys are encrypted at rest with a passphrase, clients pair over relays, and
-every request is checked against a permission rule before anything is signed.
+- Create or import accounts in **Settings**.
+- Pair clients using `bunker://` or `nostrconnect://` links.
+- Approve requests in the app or through notifications, with optional saved
+  permissions per client, method, and event kind.
+- Manage connected clients, relays, and request history.
 
-## Layout
+## NIP support
 
-    crates/signer-core     policy, NIP-46 sessions, storage. No Tauri, no macOS.
-    crates/relay-transport relay websockets behind signer-core's Transport trait
-    crates/macos-native    notification prompts, and the old Keychain store
-    src-tauri              the app: tray, window, commands
-    src-tauri/icons        tray.svg is the menu bar mark, icon.svg the app's
-    ui                     the window's frontend, plain HTML and JS
+| NIP | Implemented scope |
+| --- | --- |
+| NIP-01 | Event signing and basic relay subscriptions and publishing. |
+| NIP-04 | Encrypt/decrypt methods and fallback decryption for incoming NIP-46 messages. |
+| NIP-19 | `npub` display and `nsec` private-key import; hex import is also supported. |
+| NIP-44 | Encrypt/decrypt methods and encryption for NIP-46 messages. |
+| NIP-46 | Remote signing, with both `bunker://` and `nostrconnect://` pairing. |
+| NIP-49 | Passphrase-encrypted `ncryptsec` storage for account keys. |
 
-`signer-core` reaches the platform through three traits (`KeyStore`,
-`Approver`, `Transport`), which is what lets the parts that decide what may be
-signed be tested without a Mac and without a relay.
+Supported NIP-46 methods: `connect`, `get_public_key`, `sign_event`, `ping`,
+`nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, and `nip44_decrypt`.
 
-## Building
+This lists the features used by Byrgi, not full conformance to every listed NIP.
+Signing an event kind does not imply support for the entire NIP that defines it.
 
-`just --list` shows everything. The core crates build and test anywhere:
+## Build and run
 
-    just check        # fmt, clippy -D warnings, test
+Requires macOS, Rust, and `just`.
 
-`src-tauri` is a separate workspace and needs a Mac. The macOS recipes only
-appear there:
+```sh
+just tools    # Install the Tauri CLI once
+just cert     # Create a local signing identity once per Mac
+just release  # Build, sign, and verify the app and DMG
+just dev      # Run from source
+```
 
-    just tools        # once, installs the Tauri CLI (a separate cargo binary)
-    just cert         # once per machine, creates the signing identity
-    just release      # build, sign, and report what it is signed with
-    just dev          # run from source
+Bundles are written to `src-tauri/target/release/bundle`. Install the app in
+`/Applications` and open it from the menu bar. Use a signed bundle for
+notification approval buttons.
 
-The bundle lands in `src-tauri/target/release/bundle`. Notification buttons
-only work from a signed, bundled app, so `just dev` shows the window and the
-tray but cannot post an Approve/Reject button. Keys work either way now that
-they are not the Keychain's business.
+Builds use a self-signed certificate by default. Public distribution requires
+a Developer ID certificate and notarization; `APPLE_SIGNING_IDENTITY` overrides
+the local signing identity.
 
-## Signing
+Run `just check` for formatting, linting, and tests, or `just --list` for all tasks.
 
-The build is signed with a self-signed certificate created once by
-`just cert`. That is not about proving anything to anyone. It used to be what
-kept the Keychain admitting the app after a rebuild, which no longer applies,
-but a stable identity is still what stops macOS treating each build as a new
-application.
+## Key storage
 
-`UNUserNotificationCenter` is the main reason now. Unsigned bundles commonly get
-"Notifications are not allowed for this application" and post nothing, which
-costs the Approve/Reject buttons. The tray badge and the window still list
-pending requests, so it degrades rather than breaks.
+Each account has separate identity and transport keys. Both are encrypted with
+your passphrase and stored under
+`~/Library/Application Support/com.dgrr.byrgi/keys`. The database stores account,
+client, permission, and activity metadata, not private keys.
 
-Because the certificate is self-signed, Gatekeeper on any other Mac will
-object to the download. Installing there means right-click, Open, or:
+**Touch ID unlock is a convenience with a storage tradeoff:** enabling it saves
+the passphrase in plaintext in `unlock.passphrase` alongside the database.
+Touch ID gates access inside the app; anyone able to read that file and the key
+files can decrypt the keys. Disabling Touch ID deletes the saved passphrase.
 
-    xattr -dr com.apple.quarantine /Applications/Byrgi.app
+## Project layout
 
-Distributing properly needs a Developer ID Application certificate from the
-Apple Developer Program plus notarization and stapling. Nothing in the project
-blocks that: set `APPLE_SIGNING_IDENTITY` to the Developer ID instead, and add
-the notarization credentials the Tauri CLI reads.
-
-The bundle identifier `com.dgrr.byrgi` names the application support
-directory and the notification registration. Changing it orphans every stored
-key.
-
-## How it works
-
-Each account has two keys. The identity key is your npub and signs your
-events. The transport key is what the bunker listens on, so relay operators do
-not get a log of which apps connect to which npub.
-
-Both are stored as NIP-49 `ncryptsec` strings, in one file per account under
-`~/Library/Application Support/com.dgrr.byrgi/keys`. The passphrase you type
-at unlock is what scrypt turns into the key that opens them, and it is held in
-memory until you lock. Nothing on disk is readable without it, so a backup, a
-synced folder or a stolen laptop yields ciphertext.
-
-Keys used to live in the Keychain, and the reason for moving them is worth
-recording. An item there is stored in the clear, with an access control list
-deciding who may read it, which makes macOS the boundary rather than any
-cryptography of ours. That list binds to the code signature that wrote the
-item, so a rebuilt app is a stranger to its own keys and the user gets a login
-password dialog that answering does not settle. Guarding the item with the
-Keychain's own Touch ID needs the data protection keychain, which needs a
-keychain access group entitlement, which needs a paid Developer ID. Doing the
-encryption here needs none of that and does not depend on who is asking.
-
-The first unlock after upgrading moves any account still in the Keychain, and
-leaves the old copy alone. Deleting it is offered separately, once the new
-files have been read back and checked, because a step that removes a key
-should be one you took on purpose.
-
-Typing the passphrase every launch is optional. Tick "Unlock with Touch ID
-next time" and it is written to `unlock.passphrase` in the same directory as
-the database, read back after a Touch ID prompt, and used to open the key
-files. It is off until you ask for it, the passphrase still works when the
-sensor will not, and turning it off deletes the file.
-
-Be clear about what that costs. The key files stop being the whole story: the
-passphrase is sitting beside them in the clear, so anything that can read your
-files can open your keys, and a backup that catches both catches everything.
-Touch ID here is the app asking LocalAuthentication and honouring the answer,
-not the system refusing to hand anything over without it.
-
-The Keychain would be the better home, and this was there first. An item there
-binds to the code signature that created it, and not to that signature's
-designated requirement but to the binary itself, so every rebuild and every
-app update makes the app a stranger to its own item and the user gets a login
-password dialog that answering does not settle. Guarding the item with the
-Keychain's own Touch ID avoids that and needs the data protection keychain,
-which needs the entitlement above. A file asks for nothing and never puts a
-dialog in the way, and the honest description of it is the paragraph before
-this one.
-
-Pairing works in both directions, and the two are not symmetric. `bunker://`
-is minted here and pasted into the client, which then sends a `connect` this
-signer answers. `nostrconnect://` is minted by the client and pasted in here,
-and there the signer speaks first: the client is already waiting for a message
-carrying its own secret back, so accepting the URI sends that ack unprompted.
-Either way the secret is one-shot, and a `nostrconnect://` secret is pinned to
-the client that produced it.
-
-A `nostrconnect://` URI names the relays the client listens on, which are its
-own and need not be the signer's. Accepting one adds them to the account, so
-they show up in the relay list and can be removed there.
-
-Permissions are stored per client, per method, and per event kind for
-`sign_event`. Approving notes does not approve direct messages. Matching is
-most specific first: an exact kind rule, then a method-wide rule, then the
-user is asked.
-
-Left click on the menu bar icon opens the window under it and clicking again
-puts it away. Right click gets the menu. The window is a popover: no title bar,
-and it hides when it loses focus. The pin in its header holds it open, which is
-what you want while pasting a `nostrconnect://` URI in from a browser, and it
-is held automatically while an approval is waiting or while Touch ID has the
-focus.
-
-A request with no stored rule posts a notification with Approve and Reject
-buttons. A Focus mode can suppress that notification, so the tray icon badges
-and the window lists pending requests: a prompt nobody saw is still reachable.
-
-The database holds metadata only. No key material is ever written to it.
-
-Relay connections are one socket per account per relay, over yawc with
-permessage-deflate. Two accounts never share a connection: that would tie them
-together for the relay operator, which is the thing separate transport keys
-exist to prevent. Each connection reconnects on its own with backoff, so a
-relay being down is a property of that relay rather than something that stops
-an account. TLS is rustls throughout; nothing in the tree wants a system
-OpenSSL.
+- `crates/signer-core`: accounts, signing sessions, permissions, and storage.
+- `crates/relay-transport`: relay WebSocket connections.
+- `crates/macos-native`: macOS authentication, notifications, and legacy Keychain access.
+- `src-tauri`: desktop app, tray, and commands.
+- `ui`: HTML, CSS, and JavaScript frontend.
