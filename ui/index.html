@@ -9,11 +9,11 @@
   <body>
     <header class="bar">
       <span class="brand">
-        <span id="lock-dot" class="dot"></span>
-        <select id="account-picker" class="picker" title="Active account"></select>
+        <svg class="brand-mark" viewBox="0 0 36 36" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M7.4 27.5V18a10.6 10.6 0 0 1 21.2 0v9.5M4.5 28.6h27M13.6 17.8h8.8" /></svg>
+        <span class="brand-account"><span class="brand-name">Byrgi <span id="lock-dot" class="dot"></span></span><select id="account-picker" class="picker" title="Active account" aria-label="Active account"></select></span>
       </span>
       <button id="lock-toggle" class="icon" title="Unlock">Unlock</button>
-      <button id="scan-toggle" class="icon" title="Scan a QR code" aria-label="Scan a QR code" aria-pressed="false">Scan QR</button>
+      <button id="scan-toggle" class="icon" title="Scan a QR code" aria-label="Scan a QR code" aria-pressed="false"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 7h3v3H7zm7 0h3v3h-3zM7 14h3v3H7zm7 0h3v3h-3z" /></svg></button>
       <button id="settings-toggle" class="icon" title="Settings" aria-label="Settings" aria-pressed="false">
         <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path
@@ -22,10 +22,10 @@
           <circle cx="12" cy="12" r="3.25" />
         </svg>
       </button>
-      <button id="pin-toggle" class="icon" title="Keep the window open" aria-pressed="false">
-        Pin
+      <button id="pin-toggle" class="icon" title="Keep the window open" aria-label="Keep the window open" aria-pressed="false">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 3 8 0-1 7 3 3v2H6v-2l3-3-1-7ZM12 15v6" /></svg>
       </button>
-      <button id="close" class="icon" title="Close">&times;</button>
+      <button id="close" class="icon" title="Close" aria-label="Close window">&times;</button>
     </header>
 
     <section id="prompts" class="prompts" hidden></section>
@@ -41,6 +41,7 @@
           id="unlock-passphrase"
           type="password"
           placeholder="Passphrase"
+          aria-label="Passphrase"
           autocomplete="current-password"
         />
         <button id="unlock-go" class="primary" type="submit">Unlock</button>
@@ -64,20 +65,21 @@
       <button id="forget-keychain" class="danger">Delete the Keychain copies</button>
     </section>
 
-    <nav class="tabs" role="tablist">
-      <button class="tab is-active" data-tab="home">Account</button>
-      <button class="tab" data-tab="wallet">Wallet</button>
-      <button class="tab" data-tab="clients">Clients</button>
-      <button class="tab" data-tab="rules">Rules</button>
-      <button class="tab" data-tab="activity">Activity</button>
+    <nav class="tabs" role="tablist" aria-label="Main navigation">
+      <button id="nav-home" class="tab is-active" data-tab="home" role="tab" aria-controls="tab-home" aria-selected="true">Account</button>
+      <button id="nav-wallet" class="tab" data-tab="wallet" role="tab" aria-controls="tab-wallet" aria-selected="false" tabindex="-1">Wallet</button>
+      <button id="nav-clients" class="tab" data-tab="clients" role="tab" aria-controls="tab-clients" aria-selected="false" tabindex="-1">Clients</button>
+      <button id="nav-rules" class="tab" data-tab="rules" role="tab" aria-controls="tab-rules" aria-selected="false" tabindex="-1">Rules</button>
+      <button id="nav-activity" class="tab" data-tab="activity" role="tab" aria-controls="tab-activity" aria-selected="false" tabindex="-1">Activity</button>
     </nav>
 
     <main id="scroll">
-      <section id="tab-wallet" class="panel" aria-labelledby="wallet-heading">
+      <section id="tab-wallet" class="panel" role="tabpanel" aria-labelledby="nav-wallet" tabindex="0">
         <div class="settings-heading"><h1 id="wallet-heading">Wallet</h1><button id="wallet-refresh">Refresh</button></div>
         <p id="wallet-account" class="hint"></p>
         <select id="wallet-picker" aria-label="Cashu wallet" hidden></select>
-        <div class="card stack">
+        <div class="card stack wallet-overview">
+          <span class="eyebrow">Available balance</span>
           <strong id="wallet-balance" class="wallet-balance">— sats</strong>
           <span id="wallet-pending" class="hint"></span>
           <p id="wallet-mint" class="hint">Mint: btc.aleafnd.org/cashu</p>
@@ -158,39 +160,45 @@
         <p id="scan-status" class="hint" role="status" aria-live="polite"></p>
         <div id="scan-results" class="list"></div>
       </section>
-      <section id="tab-home" class="panel is-active">
+      <section id="tab-home" class="panel is-active" role="tabpanel" aria-labelledby="nav-home" tabindex="0">
         <div id="account-card" class="card stack"></div>
 
-        <h2>Pair a client</h2>
+        <section class="pair-section" aria-labelledby="pair-heading">
+        <h2 id="pair-heading">Connect an app</h2>
+        <p class="hint">Use your identity without sharing your private key.</p>
         <div class="split">
-          <button id="pair-bunker" class="primary">Copy bunker URI</button>
-          <button id="pair-paste">Paste nostrconnect URI</button>
+          <button id="pair-bunker" class="primary">Copy bunker link</button>
+          <button id="pair-paste" title="Paste a nostrconnect URI">Paste client link</button>
         </div>
         <div id="pair-form" class="row" hidden>
-          <input id="pair-uri" type="text" placeholder="nostrconnect://…" spellcheck="false" />
+          <input id="pair-uri" type="text" placeholder="nostrconnect://…" aria-label="Client connection link" spellcheck="false" />
           <button id="pair-client" class="primary">Accept</button>
         </div>
         <output id="pair-output" class="output" hidden></output>
+        </section>
 
         <h2>Relays</h2>
         <div id="relay-list" class="list"></div>
         <div class="row">
-          <input id="relay-url" type="text" placeholder="wss://relay.example" spellcheck="false" />
+          <input id="relay-url" type="text" placeholder="wss://relay.example" aria-label="Relay URL" spellcheck="false" />
           <button id="relay-add">Add</button>
         </div>
 
       </section>
 
-      <section id="tab-clients" class="panel">
+      <section id="tab-clients" class="panel" role="tabpanel" aria-labelledby="nav-clients" tabindex="0">
+        <div class="page-heading"><h1>Connected apps</h1><p class="hint">Manage the apps that use this identity.</p></div>
         <div id="client-list" class="list"></div>
       </section>
 
-      <section id="tab-rules" class="panel">
-        <select id="rule-client" class="picker wide"></select>
+      <section id="tab-rules" class="panel" role="tabpanel" aria-labelledby="nav-rules" tabindex="0">
+        <div class="page-heading"><h1>Permissions</h1><p class="hint">Choose what each app can do without asking.</p></div>
+        <select id="rule-client" class="picker wide" aria-label="App permissions"></select>
         <div id="rule-list" class="list"></div>
       </section>
 
-      <section id="tab-activity" class="panel">
+      <section id="tab-activity" class="panel" role="tabpanel" aria-labelledby="nav-activity" tabindex="0">
+        <div class="page-heading"><h1>Activity</h1><p class="hint">A history of requests and your decisions.</p></div>
         <div id="activity-list" class="list"></div>
         <button id="activity-more" class="ghost wide" hidden>Load more</button>
       </section>
@@ -263,12 +271,13 @@
     </main>
 
     <footer class="bar foot">
+      <span id="connection-dot" class="dot" aria-hidden="true"></span>
       <span id="relay-summary" class="muted">no relays</span>
       <span class="grow"></span>
       <span id="pending-summary" class="muted"></span>
     </footer>
 
-    <div id="toast" class="toast" hidden></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     <script src="qr.js"></script>
     <script src="wallet.js"></script>
     <script src="main.js"></script>

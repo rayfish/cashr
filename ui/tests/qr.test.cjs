@@ -62,7 +62,8 @@ test('a newly selected locked account stays visibly locked while another account
   view.context.renderUnlock();
   assert.equal(view.get('account-picker').children[0].textContent, 'Personal · Unlocked');
   assert.equal(view.get('account-picker').children[1].textContent, 'New · Locked');
-  assert.equal(view.get('account-card').children[0].children[1].textContent, 'Locked');
+  const head = view.get('account-card').children.find(node => node.className === 'card-head');
+  assert.equal(head.children.find(node => node.className.startsWith('pill')).textContent, 'Locked');
   assert.equal(view.get('unlock').hidden, false);
   vm.runInContext('state.unlockedAccounts = [1, 2]', view.context);
   view.context.renderUnlock();

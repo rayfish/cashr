@@ -1,27 +1,30 @@
 :root {
-  --bg: #f2f2f4;
+  color-scheme: light;
+  --bg: #f5f6f5;
   --panel: #ffffff;
-  --raised: #fafafc;
-  --text: #1d1d1f;
-  --muted: #77777d;
-  --line: #d8d8dd;
-  --accent: #0a66ff;
+  --raised: #f8faf9;
+  --text: #202b27;
+  --muted: #67736d;
+  --line: #dfe5e1;
+  --accent: #28745a;
   --danger: #d13b2e;
-  --ok: #1f9d55;
-  --warn: #c98a00;
-  --radius: 9px;
+  --ok: #28745a;
+  --warn: #936600;
+  --radius: 12px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1b1b1d;
-    --panel: #262629;
-    --raised: #2e2e32;
-    --text: #f2f2f4;
-    --muted: #9a9aa1;
-    --line: #3a3a3f;
-    --accent: #5a95ff;
-    --ok: #35c07a;
+    color-scheme: dark;
+    --bg: #171d1a;
+    --panel: #202823;
+    --raised: #27302a;
+    --text: #e8eee9;
+    --muted: #a0afa5;
+    --line: #354139;
+    --accent: #8ad6b2;
+    --danger: #f18e84;
+    --ok: #8ad6b2;
     --warn: #e0a92b;
   }
 }
@@ -83,8 +86,8 @@ textarea,
 .bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 4px;
+  padding: 10px 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   flex: none;
@@ -93,7 +96,7 @@ textarea,
 .foot {
   border-bottom: 0;
   border-top: 1px solid var(--line);
-  padding: 5px 10px;
+  padding: 8px 16px;
   font-size: 11px;
 }
 
@@ -105,7 +108,7 @@ textarea,
   min-width: 0;
 }
 
-.wallet-balance { font-size: 28px; }
+.wallet-balance { font-size: 36px; font-weight: 650; letter-spacing: -1.5px; font-variant-numeric: tabular-nums; }
 #tab-wallet details.card { display: block; margin-top: 10px; }
 #tab-wallet form.stack, #wallet-invoice-box { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 #tab-wallet summary { cursor: pointer; font-weight: 600; }
@@ -126,8 +129,8 @@ textarea,
 
 .tabs {
   display: flex;
-  gap: 2px;
-  padding: 6px;
+  gap: 3px;
+  padding: 8px 14px;
   background: var(--bg);
   border-bottom: 1px solid var(--line);
   flex: none;
@@ -138,7 +141,7 @@ textarea,
   border: 0;
   background: none;
   color: var(--muted);
-  padding: 5px 6px;
+  padding: 7px 6px;
   border-radius: 6px;
   cursor: default;
   font: inherit;
@@ -147,13 +150,16 @@ textarea,
 .tab.is-active {
   background: var(--panel);
   color: var(--text);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 7%), 0 0 0 1px var(--line);
+  font-weight: 600;
 }
 
 main {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 10px;
+  padding: 14px 16px 18px;
+  scrollbar-width: thin;
 }
 
 .panel {
@@ -169,7 +175,7 @@ h2 {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted);
-  margin: 16px 0 6px;
+  margin: 18px 0 8px;
   font-weight: 600;
 }
 
@@ -190,14 +196,14 @@ h2 {
 .list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
 }
 
 .card {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 7px 9px;
+  padding: 11px 12px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -210,7 +216,7 @@ h2 {
 }
 
 .card .title {
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .card-head {
@@ -235,8 +241,10 @@ button.start {
 .empty {
   color: var(--muted);
   text-align: center;
-  padding: 22px 10px;
-  border: 1px dashed var(--line);
+  padding: 28px 20px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  line-height: 1.7;
   border-radius: var(--radius);
 }
 
@@ -254,10 +262,11 @@ button.start {
 }
 
 input,
-select {
+select,
+textarea {
   flex: 1;
   min-width: 0;
-  padding: 5px 8px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--raised);
@@ -266,7 +275,8 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
   outline-offset: -1px;
 }
@@ -274,7 +284,7 @@ select:focus {
 .picker {
   border: 0;
   background: none;
-  font-weight: 550;
+  font-weight: 600;
   padding: 2px 4px;
 }
 
@@ -282,22 +292,29 @@ select:focus {
   width: 100%;
   border: 1px solid var(--line);
   background: var(--raised);
-  padding: 5px 8px;
+  padding: 8px 10px;
   margin-bottom: 8px;
 }
 
 button {
-  padding: 4px 9px;
+  min-height: 32px;
+  padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--raised);
   color: var(--text);
   font: inherit;
-  cursor: default;
+  cursor: pointer;
   white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-button:active {
+button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 5%, var(--raised));
+  border-color: color-mix(in srgb, var(--text) 20%, var(--line));
+}
+
+button:active:not(:disabled) {
   background: var(--line);
 }
 
@@ -307,23 +324,30 @@ button:focus-visible {
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 button.primary {
   background: var(--accent);
   border-color: transparent;
-  color: #fff;
+  color: var(--panel);
+}
+
+button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, var(--text));
+  border-color: transparent;
 }
 
 button.danger {
   color: var(--danger);
 }
 
-button.danger.is-armed {
+button.danger.is-armed,
+button.danger.is-armed:hover:not(:disabled) {
   background: var(--danger);
   border-color: transparent;
-  color: #fff;
+  color: var(--panel);
 }
 
 button.ghost {
@@ -341,7 +365,11 @@ button.icon {
   border: 0;
   background: none;
   color: var(--muted);
-  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 5px;
 }
 
 button.icon:hover {
@@ -369,9 +397,11 @@ button.icon[aria-pressed="true"] {
   gap: 12px;
 }
 
-.settings-heading h1 {
+.settings-heading h1,
+.page-heading h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
+  letter-spacing: -0.5px;
   font-weight: 600;
 }
 
@@ -400,7 +430,7 @@ button.icon[aria-pressed="true"] {
 }
 
 .account-form label {
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .account-form .hint,
@@ -431,7 +461,7 @@ button.plus[aria-expanded="true"] {
 
 .prompts {
   flex: none;
-  padding: 8px 10px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--accent) 10%, var(--panel));
   display: flex;
@@ -442,7 +472,7 @@ button.plus[aria-expanded="true"] {
 }
 
 .prompt .what {
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .request-field,
@@ -486,7 +516,9 @@ button.plus[aria-expanded="true"] {
 
 .unlock {
   flex: none;
-  padding: 10px;
+  padding: 12px 16px;
+  max-height: 50%;
+  overflow-y: auto;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   display: flex;
@@ -495,7 +527,7 @@ button.plus[aria-expanded="true"] {
 }
 
 .unlock-title {
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .unlock form {
@@ -538,7 +570,8 @@ button.plus[aria-expanded="true"] {
 
 .pill {
   font-size: 10px;
-  padding: 1px 7px;
+  font-weight: 600;
+  padding: 3px 8px;
   border-radius: 999px;
   background: var(--line);
   color: var(--muted);
@@ -564,7 +597,8 @@ button.plus[aria-expanded="true"] {
 
 .hint {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.55;
   margin: 6px 0 0;
 }
 
@@ -583,12 +617,63 @@ button.plus[aria-expanded="true"] {
 
 .toast {
   position: fixed;
-  left: 10px;
-  right: 10px;
-  bottom: 34px;
-  padding: 7px 10px;
+  left: 16px;
+  right: 16px;
+  bottom: 46px;
+  padding: 12px 14px;
+  overflow-wrap: anywhere;
+  z-index: 10;
   border-radius: var(--radius);
   background: var(--danger);
-  color: #fff;
+  color: var(--panel);
   box-shadow: 0 4px 14px rgb(0 0 0 / 25%);
 }
+
+/* Compact identity and balance summaries share the same visual hierarchy. */
+.brand-mark { width: 30px; height: 30px; flex: none; color: var(--accent); }
+.brand-account { display: flex; flex-direction: column; min-width: 0; }
+.brand-name { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; letter-spacing: -0.3px; }
+.brand-account .picker { width: 100%; padding: 0; font-size: 11px; color: var(--muted); text-overflow: ellipsis; }
+#lock-toggle { font-size: 11px; font-weight: 600; }
+#close { font-size: 20px; font-weight: 300; }
+button.icon[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.page-heading { margin-bottom: 18px; }
+.eyebrow { font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+.account-overview, .wallet-overview { padding: 16px; background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
+.account-overview .title { font-size: 21px; letter-spacing: -0.5px; overflow-wrap: anywhere; }
+.identity-avatar { width: 38px; height: 38px; display: grid; place-items: center; flex: none; border-radius: 11px; background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--accent); font-size: 18px; font-weight: 600; }
+.identity-key { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+.identity-key .mono { flex: 1; }
+.identity-key button { font-size: 11px; min-height: 26px; }
+.pair-section { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.pair-section h2 { margin: 0; color: var(--text); font-size: 13px; text-transform: none; letter-spacing: 0; }
+.pair-section .hint { font-size: 11px; margin: 4px 0 10px; }
+.pair-section .split button { font-size: 12px; }
+#relay-list .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#relay-list button { min-height: 26px; padding: 3px 7px; font-size: 11px; }
+#client-list .card { flex-wrap: wrap; }
+#client-list .grow { flex-basis: 100%; }
+#rule-list .grow { overflow-wrap: anywhere; }
+#unlock-hint { padding: 0; border: 0; background: none; text-align: left; font-size: 12px; line-height: 1.5; }
+#unlock-error { padding: 8px 10px; color: var(--danger); border-color: var(--danger); }
+.unlock-title { font-size: 15px; }
+#wallet-picker { width: 100%; margin: 10px 0; }
+.wallet-overview { margin-top: 12px; }
+.wallet-overview .hint { margin: 0; overflow-wrap: anywhere; }
+#wallet-pending:empty { display: none; }
+#wallet-mint { font-size: 10px; }
+#wallet-open { align-self: flex-start; margin-top: 6px; }
+#tab-wallet summary { padding: 2px 0; }
+#tab-wallet details[open] > summary { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+#wallet-destination { white-space: normal; }
+#wallet-review h2 { margin-top: 0; color: var(--text); }
+#wallet-review-amount { margin: 0; font-size: 24px; font-weight: 650; }
+.transaction-amount { font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
+.transaction-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+.panel:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+.foot .dot { width: 6px; height: 6px; }
+#pending-summary:not(:empty) { color: var(--warn); font-weight: 600; }
+.prompt + .prompt { padding-top: 12px; border-top: 1px solid var(--line); }
+input[type="checkbox"] { accent-color: var(--accent); }
+textarea { resize: vertical; }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } }

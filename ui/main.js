@@ -243,6 +243,7 @@ async function refreshStatus() {
 
   const selectedUnlocked = currentAccount() ? state.unlockedAccounts.includes(state.account) : state.unlocked;
   $("lock-dot").className = `dot ${selectedUnlocked ? "is-up" : "is-down"}`;
+  $("lock-dot").title = selectedUnlocked ? "Account unlocked" : "Account locked";
   const toggle = $("lock-toggle");
   toggle.textContent = selectedUnlocked ? "Lock" : "Unlock";
   toggle.title = selectedUnlocked
@@ -401,7 +402,7 @@ function renderAccountCard() {
   card.replaceChildren();
   const account = currentAccount();
 
-  card.className = "card stack";
+  card.className = "card stack account-overview";
   if (!account) {
     const add = el("button", "primary start", "Add account in Settings");
     add.onclick = () => {
@@ -410,14 +411,17 @@ function renderAccountCard() {
     };
     card.append(
       el("div", "title", "Add your first account"),
-      empty("Create a new identity or import an existing private key to get started."),
+      el("p", "hint", "Create a new identity or import an existing private key to get started."),
       add,
     );
     return;
   }
 
   const head = el("div", "card-head");
+  const avatar = el("span", "identity-avatar", account.label.trim().slice(0, 1).toUpperCase() || "B");
+  avatar.setAttribute("aria-hidden", "true");
   head.append(
+    avatar,
     el("span", "grow title", account.label),
     el(
       "span",
@@ -432,7 +436,9 @@ function renderAccountCard() {
   const copyKey = el("button", "ghost start", "Copy npub");
   copyKey.onclick = () => copy(account.npub, copyKey);
 
-  card.append(head, key, copyKey);
+  const identityKey = el("div", "identity-key");
+  identityKey.append(key, copyKey);
+  card.append(el("span", "eyebrow", "Nostr identity"), head, identityKey);
 }
 
 function renderLightningAddress() {
@@ -566,7 +572,8 @@ function renderRelayHealth() {
   }
 
   $("relay-summary").textContent =
-    total === 0 ? "no relays" : `${up}/${total} relays connected`;
+    total === 0 ? "No relays configured" : `${up} of ${total} relays connected`;
+  $("connection-dot").className = `dot ${up > 0 ? "is-up" : ""}`;
 }
 
 async function refreshRelayHealth() {
@@ -654,13 +661,13 @@ async function refreshRules() {
   const list = $("rule-list");
   list.replaceChildren();
   if (state.client === null) {
-    list.append(empty("No clients, so no rules."));
+    list.append(empty("Connect an app from Account to manage its permissions here."));
     return;
   }
 
   const rules = await call("rules", { client: state.client });
   if (rules.length === 0) {
-    list.append(empty("Nothing stored. Every request asks first."));
+    list.append(empty("No saved permissions. This app will ask you to approve each request."));
     return;
   }
 
@@ -714,7 +721,11 @@ async function refreshActivity(append = false) {
     state.activityCursor = null;
     list.replaceChildren();
   }
-  if (state.account === null) return;
+  if (state.account === null) {
+    list.append(empty("Add an account to see its request history here."));
+    $("activity-more").hidden = true;
+    return;
+  }
 
   const entries = await call("activity", {
     account: state.account,
@@ -723,7 +734,7 @@ async function refreshActivity(append = false) {
   });
 
   if (!append && entries.length === 0) {
-    list.append(empty("Nothing yet."));
+    list.append(empty("No activity yet. Requests from your connected apps will appear here."));
   }
 
   for (const entry of entries) {
@@ -950,7 +961,10 @@ function selectTab(name) {
   if (state.tab === "settings" && name !== "settings") showAccountForm(false);
   state.tab = name;
   for (const tab of document.querySelectorAll(".tab")) {
-    tab.classList.toggle("is-active", tab.dataset.tab === name);
+    const selected = tab.dataset.tab === name;
+    tab.classList.toggle("is-active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected || (["scan", "settings"].includes(name) && tab.dataset.tab === "home") ? 0 : -1;
   }
   for (const panel of document.querySelectorAll(".panel")) {
     panel.classList.toggle("is-active", panel.id === `tab-${name}`);
@@ -1005,6 +1019,15 @@ function wire() {
   });
   for (const tab of document.querySelectorAll(".tab")) {
     tab.onclick = () => selectTab(tab.dataset.tab);
+    tab.onkeydown = (event) => {
+      const tabs = [...document.querySelectorAll(".tab")];
+      const index = tabs.indexOf(tab);
+      const next = { ArrowRight: (index + 1) % tabs.length, ArrowLeft: (index + tabs.length - 1) % tabs.length, Home: 0, End: tabs.length - 1 }[event.key];
+      if (next === undefined) return;
+      event.preventDefault();
+      selectTab(tabs[next].dataset.tab);
+      tabs[next].focus();
+    };
   }
 
   $("settings-toggle").onclick = () => toggleSettings();

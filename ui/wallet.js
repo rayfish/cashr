@@ -50,10 +50,31 @@ window.WalletUI = (() => {
     for (const tx of data.transactions) {
       const row = document.createElement('div');
       row.className = 'card stack';
-      row.textContent = `${tx.direction} · ${tx.amount} sats · ${tx.status} · Fee ${tx.fee} sats · ${new Date(tx.timestamp * 1000).toLocaleString()}`;
+      const head = document.createElement('div');
+      head.className = 'card-head';
+      const direction = document.createElement('span');
+      direction.className = 'grow title';
+      direction.textContent = tx.direction;
+      const amount = document.createElement('span');
+      amount.className = 'transaction-amount';
+      amount.textContent = `${tx.amount.toLocaleString()} sats`;
+      head.append(direction, amount);
+      const meta = document.createElement('div');
+      meta.className = 'transaction-meta';
+      const status = document.createElement('span');
+      status.textContent = `${tx.status} · Fee ${tx.fee} sats`;
+      const date = document.createElement('span');
+      date.textContent = new Date(tx.timestamp * 1000).toLocaleString();
+      meta.append(status, date);
+      row.append(head, meta);
       history.append(row);
     }
-    if (!data.transactions.length) history.textContent = 'No transactions yet.';
+    if (!data.transactions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'No transactions yet. Add funds or receive a token to get started.';
+      history.append(empty);
+    }
     controls();
     const revision = generation;
     const list = await invoke('wallet_list', { account: account.id });
