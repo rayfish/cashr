@@ -2,189 +2,119 @@
 
 A macOS menu bar Cashu wallet with Nostr signing and zaps.
 
-- Create a 12-word Cashu wallet or restore one in **Settings**.
-  The same recovery phrase derives its Nostr identity.
-- In **Wallet → Nostr**, paste a `nostrconnect://` link, copy a bunker URL,
-  or connect using QR codes.
-- Scan QR codes from a screen selection or clipboard image using **Scan QR**.
-  Decoding stays on your Mac; choose **Connect** to pair a scanned client link.
-- Approve requests in the app or through notifications, with optional saved
-  permissions per client, method, and event kind.
-  **Activity → Always allow** saves the app and request type from that entry;
-  signing permissions stay limited to that event kind. Edit them in **Permissions**.
-- Manage connected Nostr apps, wallet connections, relays, and request history.
-- Use **Wallet** to fund a Cashu balance, receive tokens, pay Lightning invoices,
-  and approve zaps from connected Nostr apps.
-  Payments spend the selected Cashu balance after a separate amount/fee approval.
-
-## NIP support
-
-| NIP | Implemented scope |
-| --- | --- |
-| NIP-01 | Event signing and basic relay subscriptions and publishing. |
-| NIP-04 | Encrypt/decrypt methods and fallback decryption for incoming NIP-46 messages. |
-| NIP-06 | Nostr identity derived from the wallet’s BIP-39 phrase at `m/44'/1237'/0'/0/0`. |
-| NIP-19 | `npub` display and Nostr identifier parsing. |
-| NIP-42 | Relay authentication using each account’s transport key, with retries for authentication-blocked requests. |
-| NIP-44 | Encrypt/decrypt methods and encryption for NIP-46 messages. |
-| NIP-46 | Remote signing, with both `bunker://` and `nostrconnect://` pairing. |
-| NIP-49 | Passphrase-encrypted `ncryptsec` storage for account keys. |
-| NIP-57 | Create signed zap requests, validate invoice amount/description hash, and pay through Cashu. Receipts are published by the recipient’s provider. |
-
-Supported NIP-46 methods: `connect`, `get_public_key`, `sign_event`, `ping`,
-`nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`, and `nip44_decrypt`.
-
-This lists the features used by Cashr, not full conformance to every listed NIP.
-Signing an event kind does not imply support for the entire NIP that defines it.
+- Create or restore a wallet with a 12-word recovery phrase that also derives your Nostr identity.
+- Send and receive Cashu tokens, pay Lightning invoices, and approve zaps.
+- Connect Nostr apps using `bunker://`, `nostrconnect://`, or QR codes.
+- Approve signing requests in the app or notifications, and save permissions for trusted apps.
+- Scan QR codes from your screen or clipboard. Decoding stays on your Mac.
 
 ## Build and run
 
 Requires macOS, Rust, and `just`.
 
 ```sh
-just tools    # Install the Tauri CLI once
-just cert     # Create a local signing identity once per Mac
+just tools    # Install the Tauri CLI
+just cert     # Create a local signing identity
 just release  # Build, sign, and verify the app and DMG
 just dev      # Run from source
 ```
 
-Bundles are written to `src-tauri/target/release/bundle`. Install the app in
-`/Applications` and open it from the menu bar. Use a signed bundle for
-notification approval buttons.
+Install the bundle from `src-tauri/target/release/bundle` in `/Applications`.
+Use a signed build for notification approval buttons. Builds use a self-signed
+`Cashr Local` certificate; public distribution requires a Developer ID certificate
+and notarization. Set `APPLE_SIGNING_IDENTITY` to use another certificate.
 
-Builds use a self-signed `Cashr Local` certificate by default. Public distribution requires
-a Developer ID certificate and notarization; `APPLE_SIGNING_IDENTITY` overrides
-the local signing identity.
-
-Run `just check` for formatting, linting, and tests, or `just --list` for all tasks.
-UI tests run with `node --test ui/tests/*.test.cjs`.
-
-Opening **Scan QR** requests Screen Recording permission if needed.
-Clipboard image scanning does not need screen access. Scanned Lightning invoices
-can be opened in Wallet for review.
+Run `just check` for formatting, linting, and tests. Run UI tests with
+`node --test ui/tests/*.test.cjs`. See `just --list` for all tasks.
 
 ## Wallet
 
-New wallets start with a random 12-word BIP-39 phrase and Minibits at
-`https://mint.minibits.cash/Bitcoin`. The phrase supplies the Cashu seed (NUT-13)
-and derives the Nostr identity using NIP-06, account 0. There is no separate
-Nostr private-key import.
+Create or restore a wallet in **Settings**. New wallets use Minibits by default.
+Use **Choose mint** to select a saved or recommended mint, or add an HTTPS mint URL.
+Each mint has its own balance; switching mints does not move funds. The mint holds
+the bitcoin backing your tokens. Deposits and Lightning payments are limited to
+10,000 sats.
 
-Use **Choose mint** to enter another HTTPS mint URL or return to a saved mint.
-Each mint keeps its own balance, history, and pending payments, using the same
-wallet seed. Changing mints does not move funds. The mint holds the bitcoin
-backing your tokens. Deposits and Lightning payments are limited to 10,000 sats.
-Paid funding invoices are claimed automatically while unlocked. **Refresh**
-also reconciles pending payments after interruptions; a timeout does
-not mean a payment failed.
+Use **Wallet** to fund your balance, receive tokens, or pay Lightning invoices.
+Payments require a separate amount and fee approval. Incoming payments are claimed
+automatically while Cashr is awake and unlocked, even with the window closed.
+Use **Refresh** to reconcile pending payments after an interruption. A timeout
+does not mean a payment failed.
 
-Incoming collection retries use persistent backoff. Definitive mint rejections
-wait for an explicit **Refresh**. Failed invoice collection attempts are excluded
-from Recent; saved transaction records remain intact. Zaps are initiated in
-connected apps and approved in Cashr.
+### Connect apps and send zaps
 
-**Choose mint** keeps Minibits first and loads community recommendations from
-[Cashumints.space](https://cashumints.space/mints). It shows online Cashu mints
-with minting and melting enabled, at least five reviews, and an average rating
-of 4.5 or higher, ordered by the directory's weighted score. Ratings and review
-counts appear on each row; they are community opinions. Picking a row selects
-that mint, while **Add mint** accepts any supported mint URL.
+In **Wallet → Nostr**, paste a `nostrconnect://` link, copy a bunker URL, or scan a QR
+code to connect a Nostr app. Manage saved approvals in **Permissions**.
 
-**Wallet → Nostr → Connect for zaps** creates an NWC connection for the selected
-wallet and mint. Copy its link into Jumble's **Wallet → Connect wallet via NWC**.
-When Jumble requests a payment, Cashr shows its amount and maximum fees;
-**Approve & pay** pays the invoice from your Cashu balance. Every payment needs
-approval. Cashr must be running and the Mac awake. A locked wallet asks you to
-unlock before reviewing the payment. **Revoke** removes an app's payment access.
+For payments, use **Wallet → Nostr → Connect for zaps** and paste the NWC link into
+your app's wallet settings. The connection uses that mint's balance, even if you
+select another mint in Cashr. Every payment needs approval, and Cashr must be
+running with the Mac awake. Use **Revoke** to remove payment access.
 
-NWC supports `get_info`, `get_balance` and `pay_invoice`, with NIP-44 and NIP-04 encryption.
-Balance queries return the spendable balance at the connection's mint, even
-when a different mint is selected in Cashr.
-Each connection has separate keys; the client secret is shown once and is not
-stored by Cashr. Public connection metadata, encrypted replies and payment
-attempt hashes are retained in `nwc.sqlite`. Migrated connections also retain
-their server keys encrypted by the wallet identity. Repeated requests reuse a reply;
-an invoice already attempted through NWC is never submitted again automatically,
-even after a restart. Check wallet transactions if a payment's result is unknown.
-NWC does not create a receiving Lightning address.
+If an NWC payment's result is unknown, check wallet transactions. Cashr does not
+automatically resubmit an invoice already attempted through NWC.
 
-**Receive → Use npub.cash** sets the selected mint as the receiving mint and
-enables quotes locked to this wallet's Nostr identity. Cashr queries the provider
-for an existing username, otherwise uses `npub1…@npub.cash`. Copy the address
-into Jumble's Lightning Address field to receive zaps. QR and copy buttons are
-available under Receive.
+### Receive zaps
 
-**Receive → Get a readable name** checks an npub.cash username and its current
-ecash price. Choose the required payment mint, review the price and maximum
-fee, then **Claim name**. The same name works as a Lightning address and NIP-05
-identifier for this wallet's Nostr identity; copy it into those profile fields.
-Cashr does not publish changes to your Nostr profile.
+Use **Receive → Use npub.cash** to set up a Lightning address at the selected mint.
+Copy it into your Nostr profile's Lightning Address field. Changing the mint picker
+does not change where the address receives funds; use **Use npub.cash** again to
+change its receiving mint.
 
-Name payments are journaled in the encrypted wallet database before submission.
-An interrupted purchase offers **Check status**, **Retry claim** using the same
-payment token, and **Reclaim unspent payment**. A pending purchase blocks another
-payment for the account. Keep the wallet database while a purchase is pending.
+**Receive → Get a readable name** lets you check and buy an npub.cash username.
+Review the price and maximum fee before claiming it. The name also works as a
+NIP-05 identifier. Cashr does not update your Nostr profile for you.
 
-While unlocked, Cashr checks saved mints every 30 seconds and claims incoming
-payments into their encrypted wallet databases. This also runs with the tray
-window closed. After sleep or locking, collection resumes when Cashr is awake
-and unlocked. Changing the mint picker does not change the address's receiving
-mint; **Use npub.cash** on another mint does. Earlier payments stay at their
-original mint. Provider settings are rediscovered after restoring the phrase.
+For an interrupted name purchase, use **Check status**, **Retry claim**, or
+**Reclaim unspent payment**. Keep the wallet database until the purchase is resolved.
 
-**Backup and recovery → Show recovery phrase** reveals the words only while
-unlocked. They disappear when you leave, switch accounts, lock, lose window
-focus, or after one minute. Save the words and every mint URL. If you restored
-with a BIP-39 passphrase, keep that too; it affects both funds and identity.
-Cashr uses Touch ID with the macOS login password as a fallback. It has no
-separate wallet password.
+## Backup and recovery
 
-**Restore wallet** accepts the phrase, original mint URL and optional BIP-39
-passphrase. It restores the same Nostr identity and automatically scans for
-unspent tokens as the wallet loads. Interrupted scans retry automatically and
-resume after reopening. Choosing another mint also discovers its funds.
-Restoring the same phrase reuses the existing account and preserves its proofs,
-counters and history. A phrase from another Cashu wallet derives a Nostr identity
-here; it only matches an identity elsewhere if that app uses the same NIP-06 path.
+Use **Backup and recovery → Show recovery phrase** while unlocked. Save the words,
+every mint URL, and any BIP-39 passphrase used during restoration.
 
-Wallet databases and recovery words are encrypted with SQLCipher in the app’s
-`wallets` directory. Back up the entire application data directory and retain
-the local device key too. Seed recovery requires the original mint to be
-available and support restoration, and may not recover every pending operation.
-Settings includes Rename and Delete. Deletion removes the account and its active
-keys; encrypted wallet files remain available for recovery with the same phrase.
+**Restore wallet** accepts those details, restores the same Nostr identity, and
+scans for unspent tokens. Choose each original mint to recover its funds. Recovery
+requires the mint to be available and support restoration, and may not recover
+every pending operation.
 
-Importing remote Lightning wallets, Lightning channel recovery, NIP-60 wallet
-synchronization are not implemented. **Settings → Find address** queries
-npub.cash using the unlocked identity, falling back to `lud16` in its verified
-Nostr profile. **Save address** stores the result locally without publishing a
-profile. Minibits addresses can be found in profiles, not the mint's information
-endpoint. Lookup cannot find an address tied to a different identity.
+Back up the entire app data directory at
+`~/Library/Application Support/com.dgrr.cashr`, including the local device key.
+Wallet databases and recovery words are encrypted with SQLCipher.
 
-## Key storage
+Cashr uses Touch ID or your Mac login password to unlock, with no separate wallet
+password. Account keys are encrypted, but the internal device password is stored
+in plaintext in `unlock.passphrase`. Anyone who can read that file and the key
+files can decrypt the keys. Authentication is enforced by the app, not Secure Enclave storage.
 
-Each account has separate identity and transport keys. Both are encrypted with
-an internal device password and stored under
-`~/Library/Application Support/com.dgrr.cashr/keys`. The database stores account,
-client, permission, and activity metadata, not private keys.
-The bundle ID and storage namespace are `com.dgrr.cashr`. Earlier local data is
-copied on first launch and converted after unlock; the source remains a backup.
-Close the previous Cashr instance before opening the new build for this transfer.
+If local access is lost, use **Recover with recovery words**. Your wallet and Nostr
+identity stay the same, but connected apps may need to reconnect.
 
-Setup and unlock use the macOS authentication dialog: Touch ID first, with the
-Mac login password when Touch ID is unavailable, such as with the lid closed.
-Cashr never receives the login password. The internal
-device password is stored in plaintext in `unlock.passphrase` alongside the database.
-macOS authentication gates access inside the app; anyone able to read that file and the key
-files can decrypt the keys. This is app-enforced authentication, not Secure Enclave storage.
-If local access is lost, **Recover with recovery words** repairs it while keeping
-the wallet database. Inaccessible Nostr transport keys are replaced, so connected
-apps may need to reconnect. The wallet and Nostr identity remain the same.
+## NIP support
+
+| NIP | Supported features |
+| --- | --- |
+| `NIP-01` | Event signing, relay subscriptions, and publishing. |
+| `NIP-04` | Legacy encryption and decryption. |
+| `NIP-06` | Nostr identity derived from the wallet recovery phrase. |
+| `NIP-19` | `npub` display and identifier parsing. |
+| `NIP-42` | Relay authentication. |
+| `NIP-44` | Encryption and decryption, including NIP-46 messages. |
+| `NIP-46` | Remote signing with bunker and Nostr Connect pairing. |
+| `NIP-49` | Encrypted account key storage (`ncryptsec`). |
+| `NIP-57` | Zap requests and payments through Cashu. |
+
+Support covers these features, not every part of each NIP. Zap receipts are
+published by the recipient's provider.
+
+NWC supports `get_info`, `get_balance`, and `pay_invoice` with NIP-44 or NIP-04
+encryption. Remote Lightning wallet import, Lightning channel recovery, and
+NIP-60 wallet synchronization are not supported.
 
 ## Project layout
 
-- `crates/signer-core`: accounts, signing sessions, permissions, and storage.
-- `crates/relay-transport`: relay WebSocket connections.
-- `crates/macos-native`: macOS authentication, notifications, and legacy Keychain access.
+- `crates/signer-core`: accounts, signing, permissions, and storage.
+- `crates/relay-transport`: relay connections.
+- `crates/macos-native`: macOS authentication and notifications.
 - `src-tauri`: desktop app, tray, and commands.
-- `ui`: HTML, CSS, and JavaScript frontend.
+- `ui`: frontend.
