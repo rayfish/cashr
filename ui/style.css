@@ -716,6 +716,8 @@ textarea { resize: vertical; }
 .menu-toggle .glyph { width: 24px; height: 24px; }
 .header-pin { width: 36px; height: 36px; padding: 8px; display: grid; place-items: center; flex-shrink: 0; border-radius: 50%; }
 .header-pin .glyph { width: 18px; height: 18px; }
+.bar.is-draggable { cursor: grab; user-select: none; }
+.bar.is-draggable:active { cursor: grabbing; }
 .wallet-welcome { display: flex; flex-direction: column; gap: 12px; max-width: 280px; margin: 60px auto 0; text-align: center; }
 .wallet-welcome h1 { margin: 0 0 12px; font-size: 18px; }
 .wallet-welcome button { min-height: 44px; }
@@ -767,6 +769,14 @@ textarea { resize: vertical; }
 .payment-prompt .hint { overflow-wrap: anywhere; }
 .payment-amount { font-size: 24px; }
 #wallet-nwc-qr-box { display: flex; flex-direction: column; gap: 16px; margin-top: 20px; }
+.name-input { display: flex; align-items: center; gap: 10px; }
+.name-input input { width: 100%; }
+.name-input span { flex-shrink: 0; color: var(--muted); }
+.name-result { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+.name-result p { margin: 0; overflow-wrap: anywhere; }
+.activity-card { flex-wrap: wrap; gap: 12px; padding: 14px; }
+.activity-card .grow { min-width: 0; flex-basis: calc(100% - 90px); overflow-wrap: anywhere; }
+.activity-allow { margin-right: auto; }
 #tab-wallet #wallet-nwc-uri { flex: none; min-height: 200px; padding: 14px; line-height: 1.6; }
 #wallet-nwc-copy { display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 44px; }
 #nwc-prompts:not([hidden]) ~ main .wallet-heading { display: none; }

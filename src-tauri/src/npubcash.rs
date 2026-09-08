@@ -20,6 +20,7 @@ const ORIGIN: &str = "https://npub.cash";
 const LIMIT: usize = 1_048_576;
 const NAMESPACE: &str = "cashr";
 const PROVIDER: &str = "npubcash";
+pub(crate) mod username;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Address {
@@ -129,7 +130,8 @@ fn user(value: &Value, public: PublicKey) -> Result<(&Value, Address)> {
         "Provider identity mismatch"
     );
     let name = match user
-        .get("username")
+        .get("name")
+        .or_else(|| user.get("username"))
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
     {

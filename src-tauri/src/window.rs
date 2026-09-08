@@ -98,8 +98,11 @@ pub fn toggle_under<R: Runtime>(app: &AppHandle<R>, state: &WindowState, anchor:
         state.mark_hidden();
         return;
     }
-    if let Err(error) = place_under(&window, anchor) {
-        tracing::debug!("could not place the window under the icon: {error}");
+    // A pinned window keeps the position the user dragged it to.
+    if !state.is_pinned() {
+        if let Err(error) = place_under(&window, anchor) {
+            tracing::debug!("could not place the window under the icon: {error}");
+        }
     }
     let _ = window.show();
     let _ = window.set_focus();

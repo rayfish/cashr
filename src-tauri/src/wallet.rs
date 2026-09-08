@@ -48,6 +48,7 @@ impl std::error::Error for WalletFailure {}
 mod receiving;
 #[cfg(test)]
 mod recovery_tests;
+pub(crate) mod username;
 
 #[cfg(test)]
 mod tests {
@@ -396,6 +397,7 @@ pub struct WalletService {
     pub(crate) gate: tokio::sync::Mutex<()>,
     approvals: Mutex<HashMap<String, Approval>>,
     cashu_approvals: Mutex<HashMap<String, CashuApproval>>,
+    name_approvals: Mutex<HashMap<String, username::Approval>>,
     epoch: AtomicU64,
 }
 
@@ -427,6 +429,10 @@ impl WalletService {
 
     pub fn lock(&self) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
+        self.name_approvals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.approvals
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -716,6 +722,11 @@ async fn view(wallet: &Wallet) -> Result<WalletView> {
 
 #[tauri::command]
 pub fn wallet_cancel(service: State<'_, WalletService>, account: i64) {
+    service
+        .name_approvals
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, approval| approval.account != account);
     service
         .cashu_approvals
         .lock()
@@ -2058,6 +2069,9 @@ async fn pending_tokens(wallet: &Wallet) -> Result<Vec<PendingTokenView>> {
     use cdk::wallet::types::OperationData;
     let mut pending = Vec::new();
     for id in wallet.get_pending_sends().await?.into_iter().take(30) {
+        if username::is_payment(wallet, &id.to_string()).await? {
+            continue;
+        }
         if let Some(saga) = wallet.localstore.get_saga(&id).await? {
             if let OperationData::Send(data) = saga.data {
                 pending.push(PendingTokenView {

@@ -379,6 +379,54 @@ pub fn clear_rule(
 }
 
 #[tauri::command]
+pub fn allow_activity(state: State<'_, AppState>, account: i64, entry: i64) -> CommandResult<()> {
+    let account = AccountId::new(account);
+    remember_activity(
+        &state.storage,
+        account,
+        entry,
+        state.session.vault().holds(account),
+    )
+}
+
+fn remember_activity(
+    storage: &signer_core::storage::Storage,
+    account: AccountId,
+    entry: i64,
+    unlocked: bool,
+) -> CommandResult<()> {
+    if !unlocked {
+        return Err("Unlock this account first.".into());
+    }
+    let before = entry.checked_add(1).ok_or("Activity not found.")?;
+    let activity = storage
+        .activity(account, 1, Some(before))
+        .map_err(fail)?
+        .into_iter()
+        .find(|item| item.id == entry)
+        .ok_or("Activity not found.")?;
+    let client = activity
+        .client
+        .ok_or("This activity has no connected app.")?;
+    let active = storage
+        .clients(account)
+        .map_err(fail)?
+        .into_iter()
+        .any(|app| app.id == client && !app.is_revoked() && !app.is_removed());
+    if !active {
+        return Err("This app is no longer connected.".into());
+    }
+    let scope = scope_from_parts(activity.method, activity.kind.map(|kind| kind.as_u16()));
+    // A historical sign_event without a kind must not grant all event kinds.
+    if activity.method.to_string() == "sign_event" && scope.kind.is_none() {
+        return Err("This activity has no event type to remember.".into());
+    }
+    storage
+        .set_rule(client, scope, Decision::Allow)
+        .map_err(fail)
+}
+
+#[tauri::command]
 pub fn activity(
     state: State<'_, AppState>,
     account: i64,
@@ -445,6 +493,80 @@ pub fn set_pinned(state: State<'_, AppState>, pinned: bool) {
 }
 
 #[tauri::command]
+pub fn start_window_drag<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, AppState>,
+) -> CommandResult<()> {
+    if state.window.is_pinned() {
+        let window = window::get(&app).ok_or("Window unavailable.")?;
+        window.start_dragging().map_err(fail)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn hide_window<R: Runtime>(app: AppHandle<R>, state: State<'_, AppState>) {
     window::hide(&app, &state.window);
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::*;
+    use nostr::{event::Kind, key::Keys, nips::nip46::NostrConnectMethod};
+    use signer_core::storage::{ActivityOutcome, ActivitySource, NewAccount, NewActivity, Storage};
+
+    #[test]
+    fn remembering_history_is_scoped_and_rejects_locked_revoked_or_missing_clients() {
+        let storage = Storage::in_memory().unwrap();
+        let keys = Keys::generate();
+        let account = storage
+            .insert_account(NewAccount {
+                identity_public_key: keys.public_key(),
+                signer_public_key: keys.public_key(),
+                label: "fixture".into(),
+                relays: vec![],
+                is_default: true,
+            })
+            .unwrap();
+        let client = storage
+            .upsert_client(account.id, &Keys::generate().public_key(), Some("fixture"))
+            .unwrap();
+        let add = |client, kind| {
+            storage
+                .record_activity(NewActivity {
+                    account: account.id,
+                    client,
+                    method: NostrConnectMethod::SignEvent,
+                    kind,
+                    outcome: ActivityOutcome::Allowed,
+                    source: ActivitySource::User,
+                    detail: None,
+                })
+                .unwrap();
+            storage.activity(account.id, 1, None).unwrap()[0].id
+        };
+        let id = add(Some(client.id), Some(Kind::from_u16(9734)));
+        assert!(remember_activity(&storage, account.id, id, false).is_err());
+        assert!(
+            remember_activity(&storage, AccountId::new(account.id.get() + 1), id, true).is_err()
+        );
+        assert!(storage.policy_set(client.id).unwrap().rules().is_empty());
+        remember_activity(&storage, account.id, id, true).unwrap();
+        let policy = storage.policy_set(client.id).unwrap();
+        assert_eq!(policy.rules().len(), 1);
+        let rule = &policy.rules()[0];
+        assert_eq!(rule.scope.method, NostrConnectMethod::SignEvent);
+        assert_eq!(rule.scope.kind, Some(Kind::from_u16(9734)));
+        assert_eq!(rule.decision, Decision::Allow);
+        assert!(remember_activity(&storage, account.id, add(Some(client.id), None), true).is_err());
+        assert!(remember_activity(
+            &storage,
+            account.id,
+            add(None, Some(Kind::from_u16(9734))),
+            true
+        )
+        .is_err());
+        storage.revoke_client(client.id).unwrap();
+        assert!(remember_activity(&storage, account.id, id, true).is_err());
+    }
 }

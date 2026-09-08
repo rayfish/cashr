@@ -10,6 +10,8 @@ A macOS menu bar Cashu wallet with Nostr signing and zaps.
   Decoding stays on your Mac; choose **Connect** to pair a scanned client link.
 - Approve requests in the app or through notifications, with optional saved
   permissions per client, method, and event kind.
+  **Activity → Always allow** saves the app and request type from that entry;
+  signing permissions stay limited to that event kind. Edit them in **Permissions**.
 - Manage connected Nostr apps, wallet connections, relays, and request history.
 - Use **Wallet** to fund a Cashu balance, receive tokens, pay Lightning invoices,
   and approve zaps from connected Nostr apps.
@@ -110,7 +112,18 @@ NWC does not create a receiving Lightning address.
 enables quotes locked to this wallet's Nostr identity. Cashr queries the provider
 for an existing username, otherwise uses `npub1…@npub.cash`. Copy the address
 into Jumble's Lightning Address field to receive zaps. QR and copy buttons are
-available under Receive. Buying a custom username is not implemented.
+available under Receive.
+
+**Receive → Get a readable name** checks an npub.cash username and its current
+ecash price. Choose the required payment mint, review the price and maximum
+fee, then **Claim name**. The same name works as a Lightning address and NIP-05
+identifier for this wallet's Nostr identity; copy it into those profile fields.
+Cashr does not publish changes to your Nostr profile.
+
+Name payments are journaled in the encrypted wallet database before submission.
+An interrupted purchase offers **Check status**, **Retry claim** using the same
+payment token, and **Reclaim unspent payment**. A pending purchase blocks another
+payment for the account. Keep the wallet database while a purchase is pending.
 
 While unlocked, Cashr checks saved mints every 30 seconds and claims incoming
 payments into their encrypted wallet databases. This also runs with the tray

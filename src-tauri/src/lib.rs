@@ -176,6 +176,11 @@ pub fn run() -> Result<()> {
             commands::set_lightning_address,
             commands::find_lightning_address,
             wallet::wallet_enable_address,
+            wallet::username::wallet_name_status,
+            wallet::username::wallet_name_review,
+            wallet::username::wallet_name_claim,
+            wallet::username::wallet_name_retry,
+            wallet::username::wallet_name_reclaim,
             wallet::wallet_mint_directory,
             commands::set_relays,
             commands::relay_health,
@@ -188,9 +193,11 @@ pub fn run() -> Result<()> {
             commands::set_rule,
             commands::clear_rule,
             commands::activity,
+            commands::allow_activity,
             commands::prompts,
             commands::answer_prompt,
             commands::set_pinned,
+            commands::start_window_drag,
             commands::hide_window,
         ])
         .run(tauri::generate_context!())?;

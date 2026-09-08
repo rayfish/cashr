@@ -104,6 +104,24 @@ window.WalletUI = (() => {
     $('wallet-destination').textContent = '';
   }
 
+  function renderName(data) {
+    $('wallet-name-form').hidden = !!data.address || !!data.pending;
+    $('wallet-name-owned').hidden = !data.address;
+    $('wallet-name-address').textContent = data.address || '';
+    $('wallet-name-pending').hidden = !data.pending;
+    $('wallet-name-pending-address').textContent = data.pending || '';
+    $('wallet-name-retry').hidden = !data.can_retry;
+    $('wallet-name-reclaim').hidden = !data.can_reclaim;
+  }
+
+  async function nameResult(data) {
+    const revision = generation;
+    await render(data.wallet);
+    if (revision !== generation) return;
+    show('name');
+    renderName(data.name);
+  }
+
   function controls() {
     $('wallet-refresh').classList?.toggle('is-loading', busy);
     $('tab-wallet').setAttribute('aria-busy', String(busy));
@@ -148,6 +166,8 @@ window.WalletUI = (() => {
   function sync(selected, isUnlocked) {
     if (account?.id !== selected?.id || unlocked !== isUnlocked) {
       generation++;
+      renderName({});
+      $('wallet-name-input').value = '';
       cancelRetry();
       retryDelay = 2000;
       opened = false;
@@ -377,6 +397,15 @@ window.WalletUI = (() => {
       $('wallet-status').textContent = '';
     } catch (error) {
       if (revision !== generation) return;
+      if (['wallet_name_claim', 'wallet_name_retry', 'wallet_name_reclaim'].includes(command)) {
+        try {
+          const name = await invoke('wallet_name_status', { account: selected, refreshProvider: false });
+          if (revision !== generation) return;
+          show('name');
+          renderName(name);
+        } catch { /* Preserve the original operation error. */ }
+      }
+      if (revision !== generation) return;
       if (loading && retryableErrors.has(String(error))) {
         $('wallet-status').textContent = 'Connecting to mint…';
         retryLoading();
@@ -398,6 +427,7 @@ window.WalletUI = (() => {
     $('wallet-review-fee').textContent = `Fee ≤ ${data.max_fee} sats · Total ≤ ${data.maximum} sats · Expires ${new Date(data.expiry * 1000).toLocaleTimeString()}`;
     if (kind === 'cashu') $('wallet-review-fee').textContent = `Fee ≤ ${data.max_fee} sats · Total ≤ ${data.maximum} sats`;
     $('wallet-confirm').textContent = kind === 'cashu' ? `Create token · up to ${data.maximum} sats` : `Pay up to ${data.maximum} sats`;
+    if (kind === 'name') $('wallet-confirm').textContent = data.maximum ? `Claim name · up to ${data.maximum} sats` : 'Claim name';
     $('wallet-review').hidden = false;
     $('wallet-confirm').focus();
   }
@@ -417,6 +447,21 @@ window.WalletUI = (() => {
     for (const id of ['wallet-request', 'wallet-send-amount']) $(id).oninput = clearReview;
     $('wallet-open').onclick = $('wallet-refresh').onclick = () => { clearReview(); return run('wallet_open', { retryReceiving: true }); };
     const submit = (id, action) => { $(id).onsubmit = event => { event.preventDefault(); action(); }; };
+    $('wallet-name-open').onclick = () => {
+      show('name');
+      return run('wallet_name_status', { refreshProvider: true }, renderName);
+    };
+    submit('wallet-name-form', () => run('wallet_name_review', { name: $('wallet-name-input').value }, data => payment(data, 'name')));
+    $('wallet-name-check').onclick = () => run('wallet_name_status', { refreshProvider: true }, renderName);
+    $('wallet-name-retry').onclick = () => run('wallet_name_retry', {}, nameResult);
+    $('wallet-name-reclaim').onclick = () => run('wallet_name_reclaim', {}, nameResult);
+    $('wallet-name-copy').onclick = async () => {
+      const address = $('wallet-name-address').textContent;
+      if (!address) return;
+      const revision = generation;
+      try { await navigator.clipboard.writeText(address); }
+      catch { if (revision === generation) $('wallet-status').textContent = 'Select and copy the address.'; }
+    };
     for (const view of ['receive', 'send', 'nostr']) $('wallet-show-' + view).onclick = () => show(view);
     $('wallet-flow-back').onclick = () => show('home');
     $('wallet-choose-mint').onclick = () => show('mint');
@@ -549,6 +594,7 @@ window.WalletUI = (() => {
       const quote = review.quote;
       const kind = review.kind;
       clearReview();
+      if (kind === 'name') return run('wallet_name_claim', { quote }, nameResult);
       if (kind === 'cashu') return run('wallet_send_token', { quote }, async data => {
         const revision = generation, exposure = exposureGeneration;
         await render(data.wallet);
@@ -562,9 +608,10 @@ window.WalletUI = (() => {
     };
     $('wallet-cancel').onclick = () => {
       if (busy) return;
+      const kind = review?.kind;
       clearReview();
       invoke('wallet_cancel', { account: account.id }).catch(() => {});
-      show('home');
+      show(kind === 'name' ? 'name' : 'home');
       $('wallet-status').textContent = '';
     };
     $('wallet-restore').onclick = () => run('wallet_restore', {}, render);

@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <header class="bar">
+    <header id="window-header" class="bar">
       <span class="brand">
         <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#wallet-minimal" /></svg>
         <span class="brand-account"><span class="brand-name">Cashr <span id="lock-dot" class="dot"></span></span><select id="account-picker" class="picker" title="Active account" aria-label="Active account"></select></span>
@@ -90,6 +90,27 @@
               <p id="wallet-address-qr-error" class="hint"></p>
             </div>
             <p id="wallet-address-status" class="hint" role="status"></p>
+            <button id="wallet-name-open" type="button">Get a readable name</button>
+          </section>
+
+          <section class="card stack wallet-flow" data-wallet-view="name" hidden>
+            <h2 class="wallet-flow-heading">Nostr &amp; Lightning name</h2>
+            <form id="wallet-name-form" class="stack">
+              <label for="wallet-name-input">Name</label>
+              <div class="name-input"><input id="wallet-name-input" placeholder="dario" minlength="3" maxlength="64" pattern="[a-zA-Z0-9]+" required autocomplete="off" autocapitalize="none" spellcheck="false" /><span>@npub.cash</span></div>
+              <button type="submit" class="primary">Check name</button>
+            </form>
+            <div id="wallet-name-owned" class="name-result" hidden>
+              <p id="wallet-name-address" class="mono"></p>
+              <button id="wallet-name-copy" type="button">Copy address</button>
+            </div>
+            <div id="wallet-name-pending" class="name-result" hidden>
+              <p id="wallet-name-pending-address" class="mono"></p>
+              <p class="hint">Purchase not confirmed</p>
+              <button id="wallet-name-check" type="button">Check status</button>
+              <button id="wallet-name-retry" type="button">Retry claim</button>
+              <button id="wallet-name-reclaim" type="button">Reclaim unspent payment</button>
+            </div>
           </section>
 
           <section class="card stack wallet-flow" data-wallet-view="receive" hidden><h2 class="wallet-flow-heading">Add funds</h2>

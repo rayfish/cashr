@@ -411,3 +411,45 @@ test('only an explicit refresh overrides receiving backoff and mint errors remai
   await view.get('wallet-refresh').onclick();
   assert.equal(view.calls.findLast(c=>c.command==='wallet_open').args.retryReceiving,true);
 });
+
+test('name lookup and review never claim; approval uses only the native quote', async () => {
+  const payment = {quote:'name-review',amount:5000,max_fee:2,maximum:5002,expiry:2000000000,destination:'dario@npub.cash · Minibits'};
+  const view = app(async command => {
+    if (command === 'wallet_name_status') return {};
+    if (command === 'wallet_name_review') return payment;
+    if (command === 'wallet_name_claim') return {wallet:balance,name:{address:'dario@npub.cash'}};
+    if (command === 'wallet_list') return {wallets:[]};
+    return balance;
+  });
+  await view.ui.open();
+  await view.get('wallet-name-open').onclick();
+  view.get('wallet-name-input').value='dario';
+  view.get('wallet-name-form').onsubmit({preventDefault(){}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(view.calls.filter(c=>c.command==='wallet_name_claim').length,0);
+  assert.equal(view.get('wallet-confirm').textContent,'Claim name · up to 5002 sats');
+  await view.get('wallet-confirm').onclick();
+  const claim=view.calls.find(c=>c.command==='wallet_name_claim');
+  assert.deepEqual({...claim.args},{quote:'name-review',account:1});
+  assert.equal(view.get('wallet-name-address').textContent,'dario@npub.cash');
+  assert.equal(view.get('wallet-name-form').hidden,true);
+});
+
+test('a pending name purchase offers retry without creating a second review', async () => {
+  const pending={pending:'dario@npub.cash',can_retry:true,can_reclaim:true};
+  const view=app(async command=> command==='wallet_name_status'?pending:command==='wallet_name_retry'?{wallet:balance,name:pending}:command==='wallet_list'?{wallets:[]}:balance);
+  await view.ui.open();await view.get('wallet-name-open').onclick();
+  assert.equal(view.get('wallet-name-form').hidden,true);
+  assert.equal(view.get('wallet-name-pending').hidden,false);
+  await view.get('wallet-name-retry').onclick();
+  assert.equal(view.calls.filter(c=>c.command==='wallet_name_review'||c.command==='wallet_name_claim').length,0);
+});
+
+test('a late username result cannot reveal another account name', async () => {
+  let finish;
+  const view=app(command=>command==='wallet_name_status'?new Promise(resolve=>{finish=resolve;}):balance);
+  await view.ui.open();const pending=view.get('wallet-name-open').onclick();
+  view.ui.sync({id:2,label:'Other'},true);finish({address:'dario@npub.cash'});await pending;
+  assert.equal(view.get('wallet-name-address').textContent,'');
+  assert.equal(view.get('wallet-name-owned').hidden,true);
+});

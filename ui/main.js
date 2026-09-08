@@ -787,8 +787,11 @@ const OUTCOME_PILL = {
   deferred: "is-warn",
   failed: "is-deny",
 };
+let activityRevision = 0;
 
 async function refreshActivity(append = false) {
+  const revision = ++activityRevision;
+  const account = state.account;
   const list = $("activity-list");
   if (!append) {
     state.activityCursor = null;
@@ -800,26 +803,50 @@ async function refreshActivity(append = false) {
     return;
   }
 
-  const entries = await call("activity", {
-    account: state.account,
+  const [entries, clients] = await Promise.all([call("activity", {
+    account,
     limit: 25,
     before: state.activityCursor,
-  });
+  }), call('clients', { account })]);
+  if (revision !== activityRevision || account !== state.account) return;
+  const activeClients = new Map(clients.filter(client => !client.revoked).map(client => [client.id, client]));
+  const clientIds = [...new Set(entries.map(entry => entry.client).filter(id => activeClients.has(id)))];
+  const policies = new Map(await Promise.all(clientIds.map(async client => [client, await call('rules', { client })])));
+  if (revision !== activityRevision || account !== state.account) return;
 
   if (!append && entries.length === 0) {
     list.append(empty("No activity yet."));
   }
 
   for (const entry of entries) {
-    const card = el("div", "card");
+    const card = el("div", "card activity-card");
     const grow = el("div", "grow");
     const what = el("div", null, entry.description || scopeLabel(entry.method, entry.kind, entry.kind_name));
     what.title = scopeTitle(entry.method, entry.kind);
-    grow.append(what, el("div", "mono", `${when(entry.at)} · ${entry.source}`));
+    const client = activeClients.get(entry.client);
+    const appName = client ? (client.name || shorten(client.public_key)) : '';
+    grow.append(what, el("div", "mono", `${appName ? appName + ' · ' : ''}${when(entry.at)} · ${entry.source}`));
     card.append(
       grow,
       el("span", `pill ${OUTCOME_PILL[entry.outcome] ?? ""}`, entry.outcome),
     );
+    if (client && (entry.method !== 'sign_event' || entry.kind != null)) {
+      const rules = policies.get(entry.client) || [];
+      const policy = rules.find(rule => rule.method === entry.method && rule.kind === entry.kind)
+        || rules.find(rule => rule.method === entry.method && rule.kind == null);
+      const allow = el('button', 'activity-allow', policy?.allow ? 'Always allowed' : 'Always allow');
+      allow.title = `Allow ${entry.description || scopeLabel(entry.method, entry.kind, entry.kind_name)} for ${appName}`;
+      allow.disabled = !!policy?.allow || !state.unlockedAccounts.includes(account);
+      allow.onclick = async () => {
+        if (allow.disabled || account !== state.account) return;
+        allow.disabled = true;
+        try {
+          await call('allow_activity', { account, entry: entry.id });
+          allow.textContent = 'Always allowed';
+        } catch { allow.disabled = account !== state.account || !state.unlockedAccounts.includes(account); }
+      };
+      card.append(allow);
+    }
     list.append(card);
   }
 
@@ -1268,9 +1295,17 @@ function wire() {
   });
 
   const pin = $("pin-toggle");
+  const header = $("window-header");
+  header.onmousedown = event => {
+    if (!state.pinned || event.button !== 0 || event.detail > 1 ||
+        event.target.closest('button, select, input, textarea, a, [role="button"]')) return;
+    event.preventDefault();
+    invoke('start_window_drag').catch(() => {});
+  };
   pin.onclick = () => {
     state.pinned = !state.pinned;
     pin.setAttribute("aria-pressed", String(state.pinned));
+    header.classList.toggle('is-draggable', state.pinned);
     syncPinned();
   };
 
