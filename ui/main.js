@@ -21,6 +21,7 @@ const state = {
   tab: "wallet",
   menuOpen: false,
   pending: 0,
+  paymentPending: 0,
   health: [],
   pinned: false,
   busy: 0,
@@ -46,7 +47,7 @@ const $ = (id) => document.getElementById(id);
 /// a system dialog of its own is in flight: Touch ID takes the focus away, and
 /// the window would vanish mid-unlock.
 function syncPinned() {
-  const wanted = state.pinned || state.busy > 0 || state.pending > 0;
+  const wanted = state.pinned || state.busy > 0 || state.pending > 0 || state.paymentPending > 0;
   if (wanted === syncPinned.last) return;
   syncPinned.last = wanted;
   invoke("set_pinned", { pinned: wanted }).catch(() => {});
@@ -179,7 +180,7 @@ async function refreshPrompts() {
   box.replaceChildren();
   box.hidden = prompts.length === 0;
   $("pending-summary").textContent =
-    prompts.length === 0 ? "" : `${prompts.length} waiting`;
+    state.pending + state.paymentPending === 0 ? "" : `${state.pending + state.paymentPending} waiting`;
 
   for (const prompt of prompts) {
     const who = prompt.client_name || "An app";
@@ -222,6 +223,47 @@ async function refreshPrompts() {
 
     row.append(buttons);
     box.append(row);
+  }
+}
+
+async function refreshPaymentPrompts() {
+  const prompts = await call('nwc_pending');
+  state.paymentPending = prompts.length;
+  $("pending-summary").textContent = state.pending + state.paymentPending === 0 ? "" : `${state.pending + state.paymentPending} waiting`;
+  syncPinned();
+  const fingerprint = JSON.stringify([prompts, state.unlockedAccounts]);
+  if (refreshPaymentPrompts.last === fingerprint) return;
+  refreshPaymentPrompts.last = fingerprint;
+  const box = $('nwc-prompts');
+  box.replaceChildren(); box.hidden = prompts.length === 0;
+  for (const prompt of prompts) {
+    const row = el('div', 'prompt payment-prompt');
+    row.append(el('div', 'what', `${prompt.app} · ${prompt.account_label}`),
+      el('strong', 'payment-amount', `${prompt.amount.toLocaleString()} sats`),
+      el('div', 'hint', `Max fee ${prompt.max_fee} sats · Total up to ${prompt.maximum} sats`),
+      el('div', 'hint', prompt.mint),
+      el('div', 'hint', `Payee ${prompt.destination.slice(0, 12)}…${prompt.destination.slice(-8)}`));
+    const buttons = el('div', 'buttons');
+    const approve = el('button', 'primary', 'Approve & pay');
+    approve.disabled = !state.unlockedAccounts.includes(prompt.account);
+    const reject = el('button', null, 'Decline');
+    const status = el('p', 'hint');
+    let answering = false;
+    const answer = async allow => {
+      if (answering) return;
+      answering = true;
+      approve.disabled = reject.disabled = true;
+      try {
+        await call('nwc_answer', { id: prompt.id, allow }, { notifyError: false });
+        await refreshPaymentPrompts();
+      } catch (error) {
+        answering = false;
+        status.textContent = String(error);
+        approve.disabled = !state.unlockedAccounts.includes(prompt.account); reject.disabled = false;
+      }
+    };
+    approve.onclick = () => answer(true); reject.onclick = () => answer(false);
+    buttons.append(approve, reject); row.append(buttons, status); box.append(row);
   }
 }
 
@@ -396,7 +438,7 @@ async function findLightningAddress() {
       $('lightning-address').value = address;
       state.lightningDirty = true;
     }
-    $('lightning-status').textContent = address ? 'Found in Nostr profile.' : 'No published address found.';
+    $('lightning-status').textContent = address ? '' : 'No address found.';
   } catch (error) {
     if (revision === state.lightningLookupRevision) $('lightning-status').textContent = String(error);
   } finally {
@@ -427,7 +469,7 @@ async function saveLightningAddress(remove = false) {
     await call("set_lightning_address", { account: account.id, address });
     if (state.account === account.id) state.lightningDirty = false;
     await refreshStatus();
-    if (state.account === account.id) $("lightning-status").textContent = remove ? "Address removed." : "Address saved.";
+    if (state.account === account.id) $("lightning-status").textContent = '';
   } catch {
     if (state.account === account.id) $("lightning-status").textContent = "Could not save. Check the address.";
   } finally {
@@ -1085,6 +1127,7 @@ async function refreshAll() {
   await refreshRules();
   await refreshActivity();
   await refreshPrompts();
+  await refreshPaymentPrompts();
   await refreshRelayHealth();
 }
 
@@ -1287,10 +1330,22 @@ function wire() {
     listen(event, refreshAll);
   }
   listen("signer://relay", refreshRelayHealth);
+  listen('wallet://received', ({ payload }) => {
+    if (state.account === payload) window.WalletUI?.open(true);
+  });
+  listen('nwc://changed', async () => {
+    await refreshPaymentPrompts();
+    window.WalletUI?.open(true);
+  });
+  listen('nwc://unlock-needed', async ({ payload }) => {
+    state.account = payload.account;
+    await refreshAll();
+  });
 
   // Prompts can appear without an event reaching the window, so poll for them
   // as well. Cheap, and a missed prompt is worse than a redundant read.
   setInterval(refreshPrompts, 1000);
+  setInterval(refreshPaymentPrompts, 1000);
   setInterval(refreshRelayHealth, 5000);
 }
 

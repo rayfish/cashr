@@ -11,12 +11,13 @@ function app(backend = async () => balance) {
     append(...children) { this.children.push(...children); }
     replaceChildren() { this.children = []; this.textContent = ''; }
     focus() {}
+    setAttribute(name, value) { this[name] = value; }
     getContext() { return { fillStyle: '', fillRect() {} }; }
   }
   const elements = new Map();
   const timers = [], events = new Map();
   const get = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
-  const context = vm.createContext({ window: { addEventListener: (name, handler) => events.set(name, handler) }, setTimeout: callback => { timers.push(callback); return timers.length; }, clearTimeout: id => { if (id) timers[id - 1] = null; }, document: { addEventListener: (name, handler) => events.set(name, handler), getElementById: get, querySelectorAll: selector => [...elements.values()].filter(element => selector !== '[data-wallet-view]' || element.dataset?.walletView), createElement: () => new Element() } });
+  const context = vm.createContext({ window: { addEventListener: (name, handler) => events.set(name, handler) }, setTimeout: callback => { timers.push(callback); return timers.length; }, clearTimeout: id => { if (id) timers[id - 1] = null; }, document: { addEventListener: (name, handler) => events.set(name, handler), getElementById: get, querySelectorAll: selector => [...elements.values()].filter(element => selector !== '[data-wallet-view]' || element.dataset?.walletView), createElement: () => new Element(), createElementNS: () => new Element() } });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../wallet.js'), 'utf8'), context);
   const calls = [];
   const ui = context.window.WalletUI;
@@ -24,6 +25,39 @@ function app(backend = async () => balance) {
   ui.sync({ id: 1, label: 'Personal' }, true);
   return { ui, get, calls, timers, events };
 }
+
+test('provider receiving needs one click and a late response cannot cross accounts', async () => {
+  let finish;
+  const view = app(command => command === 'wallet_enable_address' ? new Promise(resolve => { finish = resolve; }) : balance);
+  await view.ui.open();
+  view.ui.show('receive');
+  assert.equal(view.get('wallet-address-enable').hidden, false);
+  assert.equal(view.calls.filter(c => c.command === 'wallet_enable_address').length, 0);
+  const pending = view.get('wallet-address-enable').onclick();
+  view.get('wallet-address-enable').onclick();
+  assert.equal(view.calls.filter(c => c.command === 'wallet_enable_address').length, 1);
+  view.ui.sync({id: 2, label: 'Other'}, true);
+  finish({...balance, lightning_address:{address:'dario@npub.cash',mint:'https://mint.example'}});
+  await pending;
+  assert.equal(view.get('wallet-address-value').value, '');
+  assert.equal(view.get('wallet-address-box').hidden, true);
+});
+
+test('provider address displays without banners and changing it clears the old QR', async () => {
+  let address = 'dario@npub.cash';
+  const view = app(async () => ({...balance, lightning_address: address ? {address,mint:'https://mint.example'} : null}));
+  await view.ui.open();
+  assert.equal(view.get('wallet-address-enable').hidden, true);
+  assert.equal(view.get('wallet-address-value').value, address);
+  assert.equal(view.get('wallet-address-status').textContent, '');
+  view.get('wallet-address-qr').hidden = false;
+  view.get('wallet-address-qr').width = 120;
+  address = null;
+  await view.ui.open(true);
+  assert.equal(view.get('wallet-address-enable').hidden, false);
+  assert.equal(view.get('wallet-address-qr').hidden, true);
+  assert.equal(view.get('wallet-address-qr').width, 0);
+});
 
 test('automatic opening does not loop after failure and Refresh still retries', async () => {
   const view = app(async () => { throw new Error('Restore this wallet in Settings.'); });
@@ -40,19 +74,19 @@ test('automatic opening does not loop after failure and Refresh still retries', 
 
 test('a pasted Nostr link requires Connect and cannot pair twice while pending', async () => {
   let finish;
-  const view = app(() => new Promise(resolve => { finish = resolve; }));
+  const view = app(command => command === 'nwc_connections' ? [] : new Promise(resolve => { finish = resolve; }));
   view.ui.show('nostr');
   view.get('wallet-nostr-connect-uri').value = 'nostrconnect://client?secret=fixture';
-  assert.equal(view.calls.length, 0);
+  assert.equal(view.calls.filter(c => c.command !== 'nwc_connections').length, 0);
   view.get('wallet-nostr-connect-form').onsubmit({ preventDefault() {} });
   view.get('wallet-nostr-connect-form').onsubmit({ preventDefault() {} });
-  assert.equal(view.calls.length, 1);
-  assert.equal(view.calls[0].command, 'pair_client');
-  assert.equal(view.calls[0].args.account, 1);
+  assert.equal(view.calls.filter(c => c.command !== 'nwc_connections').length, 1);
+  assert.equal(view.calls.find(c => c.command === 'pair_client').command, 'pair_client');
+  assert.equal(view.calls.find(c => c.command === 'pair_client').args.account, 1);
   finish({});
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(view.get('wallet-nostr-connect-uri').value, '');
-  assert.equal(view.get('wallet-status').textContent, 'Nostr app connected.');
+  assert.equal(view.get('wallet-status').textContent, '');
 });
 
 test('reimporting the same account reloads its recovered balance', async () => {
@@ -188,20 +222,22 @@ test('choosing a mint clears payment approval and Minibits is the default', asyn
   assert.equal(view.get('wallet-mint').textContent, 'Mint: https://mint.example');
   await view.get('wallet-confirm').onclick();
   assert.equal(view.calls.some(call => call.command === 'wallet_pay'), false);
-  await view.get('wallet-mint-default').onclick();
+  await view.get('wallet-picker').children.find(row => row.id === 'wallet-mint-default').onclick();
   assert.equal(view.calls.findLast(call => call.command === 'wallet_set_mint').args.mint, 'https://mint.minibits.cash/Bitcoin');
 });
 
 test('a late mint selection cannot overwrite another account and locked accounts cannot choose mints', async () => {
   let finish;
   const view = app(command => command === 'wallet_set_mint' ? new Promise(resolve => { finish = resolve; }) : balance);
-  const pending = view.get('wallet-mint-default').onclick();
+  await view.ui.open();
+  const row = view.get('wallet-picker').children.find(row => row.id === 'wallet-mint-default');
+  const pending = row.onclick();
   view.ui.sync({ id: 2, label: 'Work' }, false);
   finish({ ...balance, mint: 'https://mint.example' });
   await pending;
   assert.equal(view.get('wallet-mint').textContent, '');
   assert.equal(view.get('wallet-balance').textContent, '— sats');
-  await view.get('wallet-mint-default').onclick();
+  await row.onclick();
   assert.equal(view.calls.filter(call => call.command === 'wallet_set_mint').length, 1);
 });
 
@@ -289,4 +325,62 @@ test('a late token response never reveals bearer data after leaving the wallet',
   await pending;
   assert.equal(view.get('wallet-share-token').value, '');
   assert.equal(view.calls.some(call => call.command === 'encode_qr'), false);
+});
+
+test('NWC pairing requires a click, suppresses duplicates, and hides its link on blur', async () => {
+  let finish;
+  const view = app(command => {
+    if (command === 'nwc_connections') return [{ id: 'connection', label: 'Jumble' }];
+    if (command === 'nwc_pair') return new Promise(resolve => { finish = resolve; });
+    if (command === 'encode_qr') return { width: 1, modules: [true] };
+    return balance;
+  });
+  view.ui.show('nostr');
+  view.get('wallet-nwc-name').value = 'Jumble';
+  assert.equal(view.calls.filter(c => c.command === 'nwc_pair').length, 0);
+  view.get('wallet-nwc-form').onsubmit({ preventDefault() {} });
+  view.get('wallet-nwc-form').onsubmit({ preventDefault() {} });
+  assert.equal(view.calls.filter(c => c.command === 'nwc_pair').length, 1);
+  finish('nostr+walletconnect://fixture?secret=test');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(view.get('wallet-nwc-uri').value, /^nostr\+walletconnect:/);
+  assert.equal(view.get('wallet-nwc-qr-box').hidden, false);
+  view.events.get('blur')();
+  assert.equal(view.get('wallet-nwc-uri').value, '');
+  assert.equal(view.get('wallet-nwc-qr-box').hidden, true);
+  assert.equal(view.calls.filter(c => c.command === 'wallet_pay').length, 0);
+});
+
+test('a late NWC pairing cannot reveal its secret after locking or changing accounts', async () => {
+  let finish;
+  const view = app(command => command === 'nwc_connections' ? [] : new Promise(resolve => { finish = resolve; }));
+  view.get('wallet-nwc-name').value = 'Jumble';
+  view.get('wallet-nwc-form').onsubmit({ preventDefault() {} });
+  view.ui.sync({ id: 2, label: 'Other' }, false);
+  finish('nostr+walletconnect://fixture?secret=test');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(view.get('wallet-nwc-uri').value, '');
+  assert.equal(view.get('wallet-nwc-qr-box').hidden, true);
+});
+
+test('mints are clickable saved choices with Minibits, and refresh leaves no success banner', async () => {
+  const view = app(command => command === 'wallet_list' ? { active: 'other', wallets: [
+    { id: 'original', label: 'https://mint.minibits.cash/Bitcoin' },
+    { id: 'other', label: 'https://mint.example' },
+  ] } : balance);
+  await view.ui.open();
+  view.ui.show('mint');
+  const rows = view.get('wallet-picker').children;
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].children[0].textContent, 'Minibits');
+  assert.equal(rows[1].children[0].textContent, 'mint.example');
+  assert.equal(rows[1]['aria-pressed'], 'true');
+  await rows[0].onclick();
+  assert.equal(view.calls.findLast(c => c.command === 'wallet_select').args.slot, 'original');
+  assert.equal(view.get('wallet-status').textContent, '');
+  view.get('wallet-mint-add').onclick();
+  assert.equal(view.get('wallet-mint-form').hidden, false);
+  assert.equal(view.get('wallet-mint-url').value, '');
+  view.get('wallet-mint-cancel').onclick();
+  assert.equal(view.get('wallet-mint-form').hidden, true);
 });

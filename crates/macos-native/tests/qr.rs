@@ -19,7 +19,7 @@ fn decodes_a_pairing_uri_without_changing_its_payload() {
 fn returns_all_codes_for_the_user_to_choose() {
     let mut codes = qr::decode(include_bytes!("fixtures/qr-multiple.png")).unwrap();
     codes.sort();
-    assert_eq!(codes, vec!["byrgi-test-one", "byrgi-test-two"]);
+    assert_eq!(codes, vec!["cashr-test-one", "cashr-test-two"]);
 }
 
 #[test]

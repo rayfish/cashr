@@ -126,9 +126,11 @@ pub async fn import_account(
 pub async fn delete_account(
     state: State<'_, AppState>,
     wallet: State<'_, crate::wallet::WalletService>,
+    nwc: State<'_, crate::nwc::NwcService>,
     account: i64,
 ) -> CommandResult<()> {
     let _guard = wallet.gate.lock().await;
+    nwc.remove_account(account).map_err(fail)?;
     wallet.lock();
     state
         .delete_account(AccountId::new(account))
@@ -173,6 +175,12 @@ pub async fn find_lightning_address(
     state: State<'_, AppState>,
     account: i64,
 ) -> CommandResult<Option<String>> {
+    // Query the authenticated provider first; a profile can contain an old name.
+    if state.session.vault().holds(AccountId::new(account)) {
+        if let Ok(address) = crate::npubcash::lookup(&state, AccountId::new(account)).await {
+            return Ok(Some(address.address));
+        }
+    }
     let account = state
         .storage
         .account(AccountId::new(account))

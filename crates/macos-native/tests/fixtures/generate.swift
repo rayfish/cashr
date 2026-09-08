@@ -18,8 +18,8 @@ func save(_ image: CIImage, _ name: String) throws {
 }
 let pairing = "nostrconnect://" + String(repeating: "a", count: 64) + "?relay=wss%3A%2F%2Frelay.example.com&secret=qr-test"
 try save(code(pairing), "qr-pairing.png")
-let first = code("byrgi-test-one")
-let second = code("byrgi-test-two").transformed(by: CGAffineTransform(translationX: first.extent.width + 32, y: 0))
+let first = code("cashr-test-one")
+let second = code("cashr-test-two").transformed(by: CGAffineTransform(translationX: first.extent.width + 32, y: 0))
 let bounds = first.extent.union(second.extent)
 let background = CIImage(color: .white).cropped(to: bounds)
 try save(first.composited(over: second.composited(over: background)), "qr-multiple.png")

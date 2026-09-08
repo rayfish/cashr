@@ -3,6 +3,9 @@
 #![forbid(unsafe_code)]
 
 mod commands;
+mod migration;
+mod npubcash;
+mod nwc;
 mod paths;
 mod qr;
 mod scan;
@@ -66,6 +69,8 @@ pub fn run() -> Result<()> {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            migration::prepare(&handle)?;
+            app.manage(migration::MigrationLock::default());
             let storage = Storage::open(&paths::database(&handle)?)?;
             let state = AppState::build(
                 &handle,
@@ -75,6 +80,9 @@ pub fn run() -> Result<()> {
                 &app.config().identifier,
             )?;
             app.manage(state);
+            app.manage(nwc::NwcService::new(&handle)?);
+            handle.state::<nwc::NwcService>().start(&handle)?;
+            wallet::start_receiving(&handle);
 
             tray::build(&handle)?;
 
@@ -99,7 +107,8 @@ pub fn run() -> Result<()> {
             tauri::async_runtime::spawn(async move {
                 let mut shown = usize::MAX;
                 loop {
-                    let pending = badge_handle.state::<AppState>().approver.pending_count();
+                    let pending = badge_handle.state::<AppState>().approver.pending_count()
+                        + badge_handle.state::<nwc::NwcService>().pending_count();
                     if pending != shown {
                         tray::set_badge(&badge_handle, pending);
                         shown = pending;
@@ -133,6 +142,11 @@ pub fn run() -> Result<()> {
             scan::prepare_scan,
             scan::scan_clipboard,
             commands::status,
+            nwc::nwc_pair,
+            nwc::nwc_connections,
+            nwc::nwc_revoke,
+            nwc::nwc_pending,
+            nwc::nwc_answer,
             wallet::wallet_open,
             wallet::wallet_list,
             wallet::wallet_select,
@@ -161,6 +175,7 @@ pub fn run() -> Result<()> {
             commands::set_default_account,
             commands::set_lightning_address,
             commands::find_lightning_address,
+            wallet::wallet_enable_address,
             commands::set_relays,
             commands::relay_health,
             commands::pair_bunker,

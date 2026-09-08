@@ -16,7 +16,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
-cdk = { version = "=0.18.0", default-features = false, features = ["wallet"] }
+futures = "0.3"
+yawc = "0.3"
+cdk = { version = "=0.18.0", default-features = false, features = ["wallet", "npubcash"] }
+base64 = "0.22"
 cdk-sqlite = { version = "=0.18.0", default-features = false, features = ["wallet", "sqlcipher"] }
 sha2 = "0.10"
 bip39 = { version = "2.2", features = ["zeroize"] }

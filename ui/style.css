@@ -759,3 +759,19 @@ textarea { resize: vertical; }
 .connection-actions .glyph { width: 20px; height: 20px; }
 #wallet-nostr-qr-box { margin-top: 18px; }
 .hint:empty, #unlock-hint:empty { display: none; }
+
+.nwc-connection { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.nwc-connection span { overflow-wrap: anywhere; min-width: 0; }
+.payment-prompt { display: flex; flex-direction: column; gap: 12px; }
+.payment-prompt .hint { overflow-wrap: anywhere; }
+.payment-amount { font-size: 24px; }
+#wallet-nwc-copy { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+#nwc-prompts:not([hidden]) ~ main .wallet-heading { display: none; }
+.mint-list { display: flex; flex-direction: column; }
+.mint-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 16px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left; }
+.mint-row span:first-child { overflow-wrap: anywhere; }
+.mint-row[aria-pressed="true"] { color: var(--ok); }
+#wallet-mint-add { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+#wallet-refresh.is-loading .glyph { animation: wallet-refresh-spin 1s linear infinite; }
+@keyframes wallet-refresh-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #wallet-refresh.is-loading .glyph { animation: none; } }

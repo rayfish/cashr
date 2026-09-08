@@ -2,8 +2,7 @@
 
 # The code signing identity builds are signed with. Override with
 # APPLE_SIGNING_IDENTITY to use a Developer ID instead.
-# Keep the existing certificate so installed wallets retain their signing identity.
-identity := env_var_or_default("APPLE_SIGNING_IDENTITY", "Byrgi Local")
+identity := env_var_or_default("APPLE_SIGNING_IDENTITY", "Cashr Local")
 
 # How long the self-signed certificate lasts.
 cert_days := "3650"
@@ -66,11 +65,8 @@ cert:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # The point is that the identity is stable. A Keychain item's ACL binds to
-    # the app's code signature, so a build signed with a fresh key every time
-    # looks like a different app to macOS and is refused the keys it stored
-    # last time. This certificate never leaves the machine and proves nothing
-    # to anyone else.
+    # Reuse one local certificate across builds. It stays on this Mac and
+    # is separate from the wallet's keys and recovery phrase.
 
     if security find-identity -v -p codesigning | grep -qF "{{ identity }}"; then
         echo "Identity '{{ identity }}' already exists. Nothing to do."
@@ -120,11 +116,8 @@ cert:
     echo "macOS will ask you to confirm trusting the certificate."
     security add-trusted-cert -r trustRoot -p codeSign -k "$keychain" "$work/cert.pem"
 
-    # Without this the first codesign run pops a keychain dialog that a build
-    # cannot answer. It needs the login password, so it asks.
-    echo "Pre-authorising the key for codesign."
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s "$keychain" >/dev/null 2>&1 || \
-        echo "Could not pre-authorise the key; expect one prompt on the first build."
+    # The import authorizes codesign for this key. macOS may still ask for
+    # access on the first build; do not change permissions on unrelated keys.
 
     if ! security find-identity -v -p codesigning | grep -qF "{{ identity }}"; then
         echo >&2
@@ -144,9 +137,7 @@ build: _needs-tauri
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # Signing is not optional in practice: an unsigned build gets a new
-    # signature every time and the Keychain refuses keys stored by what it
-    # considers a different app. Notifications also stay silent without one.
+    # Use a stable signing identity for macOS permissions and notifications.
 
     if ! security find-identity -v -p codesigning | grep -qF "{{ identity }}"; then
         echo "No code signing identity called '{{ identity }}'." >&2

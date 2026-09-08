@@ -388,3 +388,40 @@ test('approval previews render as text and preserve expanded details across poll
   assert.equal(get('prompts').hidden, true);
   assert.equal(get('prompts').children.length, 0);
 });
+
+test('NWC approvals show amount and fees, require a click, and cannot submit twice', async () => {
+  const view = app();
+  vm.runInContext('state.unlockedAccounts = [1]', view.context);
+  const prompt = { id: 'request', connection: 'connection', account: 1, account_label: 'Personal', app: '<img src=x>', mint: 'https://mint.example', amount: 21, max_fee: 2, maximum: 23, destination: 'a'.repeat(66), expiry: 2000000000 };
+  let finish; const answers = [];
+  view.context.call = async (command, args) => {
+    if (command === 'nwc_pending') return [prompt];
+    if (command === 'nwc_answer') { answers.push(args); return new Promise(resolve => { finish = resolve; }); }
+  };
+  await view.context.refreshPaymentPrompts();
+  const row = view.get('nwc-prompts').children[0];
+  assert.match(row.children[0].textContent, /<img src=x>/);
+  assert.equal(row.children[1].textContent, '21 sats');
+  assert.match(row.children[2].textContent, /Max fee 2 sats · Total up to 23 sats/);
+  assert.equal(answers.length, 0);
+  const buttons = row.children[5];
+  assert.equal(buttons.children.length, 2);
+  const click = buttons.children[0].onclick();
+  await buttons.children[0].onclick();
+  assert.equal(answers.length, 1);
+  assert.equal(answers[0].allow, true);
+  finish(); await click;
+});
+
+test('NWC approvals disable paying a locked account and allow declining it', async () => {
+  const view = app(); const answers = [];
+  view.context.call = async (command, args) => {
+    if (command === 'nwc_pending') return [{ id: 'request', account: 1, app: 'Jumble', amount: 21, max_fee: 1, maximum: 22, destination: 'a'.repeat(66) }];
+    if (command === 'nwc_answer') answers.push(args);
+  };
+  await view.context.refreshPaymentPrompts();
+  const buttons = view.get('nwc-prompts').children[0].children[5];
+  assert.equal(buttons.children[0].disabled, true);
+  await buttons.children[1].onclick();
+  assert.equal(answers[0].allow, false);
+});

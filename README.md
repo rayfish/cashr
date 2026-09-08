@@ -50,7 +50,7 @@ Bundles are written to `src-tauri/target/release/bundle`. Install the app in
 `/Applications` and open it from the menu bar. Use a signed bundle for
 notification approval buttons.
 
-Builds use a self-signed certificate by default. Public distribution requires
+Builds use a self-signed `Cashr Local` certificate by default. Public distribution requires
 a Developer ID certificate and notarization; `APPLE_SIGNING_IDENTITY` overrides
 the local signing identity.
 
@@ -76,6 +76,35 @@ Pay funding invoices from another wallet, then **Refresh** to claim tokens.
 Refresh also reconciles pending payments after interruptions; a timeout does
 not mean a payment failed.
 
+**Wallet → Nostr → Connect for zaps** creates an NWC connection for the selected
+wallet and mint. Copy its link into Jumble's **Wallet → Connect wallet via NWC**.
+When Jumble requests a payment, Cashr shows its amount and maximum fees;
+**Approve & pay** pays the invoice from your Cashu balance. Every payment needs
+approval. Cashr must be running and the Mac awake. A locked wallet asks you to
+unlock before reviewing the payment. **Revoke** removes an app's payment access.
+
+NWC supports `get_info` and `pay_invoice`, with NIP-44 and NIP-04 encryption.
+Each connection has separate keys; the client secret is shown once and is not
+stored by Cashr. Public connection metadata, encrypted replies and payment
+attempt hashes are retained in `nwc.sqlite`. Migrated connections also retain
+their server keys encrypted by the wallet identity. Repeated requests reuse a reply;
+an invoice already attempted through NWC is never submitted again automatically,
+even after a restart. Check wallet transactions if a payment's result is unknown.
+NWC does not create a receiving Lightning address.
+
+**Receive → Use npub.cash** sets the selected mint as the receiving mint and
+enables quotes locked to this wallet's Nostr identity. Cashr queries the provider
+for an existing username, otherwise uses `npub1…@npub.cash`. Copy the address
+into Jumble's Lightning Address field to receive zaps. QR and copy buttons are
+available under Receive. Buying a custom username is not implemented.
+
+While unlocked, Cashr checks saved mints every 30 seconds and claims incoming
+payments into their encrypted wallet databases. This also runs with the tray
+window closed. After sleep or locking, collection resumes when Cashr is awake
+and unlocked. Changing the mint picker does not change the address's receiving
+mint; **Use npub.cash** on another mint does. Earlier payments stay at their
+original mint. Provider settings are rediscovered after restoring the phrase.
+
 **Backup and recovery → Show recovery phrase** reveals the words only while
 unlocked. They disappear when you leave, switch accounts, lock, lose window
 focus, or after one minute. Save the words and every mint URL. If you restored
@@ -98,22 +127,22 @@ available and support restoration, and may not recover every pending operation.
 Settings includes Rename and Delete. Deletion removes the account and its active
 keys; encrypted wallet files remain available for recovery with the same phrase.
 
-Remote Lightning wallet connections, Lightning channel recovery, NIP-60 wallet
-synchronization and hosted Lightning address registration are not implemented.
-An empty Lightning address field looks up `lud16` in the recovered identity's
-verified public Nostr profile. **Find address** retries; **Save address** stores
-the result locally. Minibits publishes addresses in these profiles, not in the
-mint's information endpoint. Lookup cannot find an address tied to a different
-identity and never registers or transfers an address.
+Importing remote Lightning wallets, Lightning channel recovery, NIP-60 wallet
+synchronization are not implemented. **Settings → Find address** queries
+npub.cash using the unlocked identity, falling back to `lud16` in its verified
+Nostr profile. **Save address** stores the result locally without publishing a
+profile. Minibits addresses can be found in profiles, not the mint's information
+endpoint. Lookup cannot find an address tied to a different identity.
 
 ## Key storage
 
 Each account has separate identity and transport keys. Both are encrypted with
 an internal device password and stored under
-`~/Library/Application Support/com.dgrr.byrgi/keys`. The database stores account,
+`~/Library/Application Support/com.dgrr.cashr/keys`. The database stores account,
 client, permission, and activity metadata, not private keys.
-The internal bundle ID and storage format retain their original identifiers so
-renaming the app to Cashr keeps existing wallets accessible.
+The bundle ID and storage namespace are `com.dgrr.cashr`. Earlier local data is
+copied on first launch and converted after unlock; the source remains a backup.
+Close the previous Cashr instance before opening the new build for this transfer.
 
 Setup and unlock use the macOS authentication dialog: Touch ID first, with the
 Mac login password when Touch ID is unavailable, such as with the lid closed.

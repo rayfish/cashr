@@ -22,9 +22,14 @@ use crate::keystore::{KeyHandle, KeyRole, KeyStore};
 
 /// Domain-separated database encryption material; not the Cashu spending seed.
 pub fn wallet_storage_seed(keys: &Keys) -> [u8; 64] {
+    storage_seed_for_migration(keys, "cashr")
+}
+
+/// Derive the previous namespace's encryption material during a local migration.
+pub fn storage_seed_for_migration(keys: &Keys, namespace: &str) -> [u8; 64] {
     use sha2::{Digest, Sha512};
     let mut hash = Sha512::new();
-    hash.update(b"byrgi/cashu/wallet-seed/v1\0");
+    hash.update(format!("{namespace}/cashu/wallet-seed/v1\0").as_bytes());
     hash.update(keys.secret_key().as_secret_bytes());
     hash.finalize().into()
 }
@@ -118,6 +123,18 @@ impl Vault {
     pub fn wallet_storage_seed(&self, account: AccountId) -> Result<[u8; 64]> {
         self.with(account, Which::Identity, |keys| {
             Ok(wallet_storage_seed(keys))
+        })
+    }
+
+    /// Used only while converting a previous application's database namespace.
+    /// The namespace comes from its data directory, never from a remote request.
+    pub fn storage_seed_for_migration(
+        &self,
+        account: AccountId,
+        namespace: &str,
+    ) -> Result<[u8; 64]> {
+        self.with(account, Which::Identity, |keys| {
+            Ok(storage_seed_for_migration(keys, namespace))
         })
     }
 

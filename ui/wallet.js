@@ -19,7 +19,7 @@ window.WalletUI = (() => {
       retryTimer = null;
       if (revision !== generation || !account || !unlocked) return;
       if (busy) return retryLoading();
-      return run('wallet_open', {}, render, '');
+      return run('wallet_open', {}, render);
     }, retryDelay);
     retryDelay = Math.min(retryDelay * 2, 30000);
   }
@@ -37,7 +37,7 @@ window.WalletUI = (() => {
   function hideCodes() {
     exposureGeneration++;
     sharedOperation = null;
-    for (const prefix of ['wallet-share', 'wallet-nostr', 'wallet-invoice']) {
+    for (const prefix of ['wallet-share', 'wallet-nostr', 'wallet-invoice', 'wallet-nwc', 'wallet-address']) {
       const canvas = $(prefix + '-qr');
       canvas.width = canvas.height = 0;
       canvas.hidden = true;
@@ -46,6 +46,8 @@ window.WalletUI = (() => {
     $('wallet-share-token').value = '';
     $('wallet-nostr-uri').value = '';
     $('wallet-nostr-qr-box').hidden = true;
+    $('wallet-nwc-uri').value = '';
+    $('wallet-nwc-qr-box').hidden = true;
   }
 
   function hideSecrets() { hideBackup(); hideCodes(); $('wallet-token').value = ''; $('wallet-nostr-connect-uri').value = ''; incomingRevision++; }
@@ -102,6 +104,8 @@ window.WalletUI = (() => {
   }
 
   function controls() {
+    $('wallet-refresh').classList?.toggle('is-loading', busy);
+    $('tab-wallet').setAttribute('aria-busy', String(busy));
     $('wallet-welcome').hidden = !!account;
     $('wallet-overview').hidden = !account || currentView !== 'home';
     $('wallet-refresh').hidden = !account;
@@ -122,6 +126,7 @@ window.WalletUI = (() => {
     hideSecrets();
     clearReview();
     currentView = name;
+    if (name === 'nostr') loadConnections();
     for (const panel of document.querySelectorAll('[data-wallet-view]')) {
       panel.hidden = panel.dataset.walletView !== name;
     }
@@ -129,7 +134,10 @@ window.WalletUI = (() => {
     $('wallet-recent').hidden = name !== 'home';
     $('wallet-shortcuts').hidden = name !== 'home';
     $('wallet-overview').hidden = name !== 'home';
-    $('wallet-picker').hidden = name !== 'mint' || $('wallet-picker').children.length < 2;
+    $('wallet-picker').hidden = name !== 'mint';
+    $('wallet-mint-form').hidden = true;
+    $('wallet-mint-add').hidden = false;
+    $('wallet-status').textContent = '';
     $('scroll').scrollTop = 0;
     if (name === 'receive' && $('wallet-invoice').value) drawQR($('wallet-invoice').value, 'wallet-invoice');
     controls();
@@ -148,6 +156,10 @@ window.WalletUI = (() => {
       $('wallet-history').replaceChildren();
       $('wallet-pending-tokens').replaceChildren();
       $('wallet-pending-tokens').hidden = true;
+      $('wallet-nwc-connections').replaceChildren();
+      $('wallet-address-value').value = '';
+      $('wallet-address-box').hidden = true;
+      $('wallet-address-status').textContent = '';
       $('wallet-token-info').textContent = '';
       incomingRevision++;
       for (const id of ['wallet-invoice', 'wallet-token', 'wallet-request', 'wallet-zap-address', 'wallet-zap-recipient', 'wallet-zap-note']) $(id).value = '';
@@ -166,6 +178,15 @@ window.WalletUI = (() => {
 
   async function render(data) {
     opened = true;
+    const address = data.lightning_address?.address || '';
+    if ($('wallet-address-value').value !== address) {
+      $('wallet-address-qr').hidden = true;
+      $('wallet-address-qr').width = $('wallet-address-qr').height = 0;
+    }
+    $('wallet-address-value').value = address;
+    $('wallet-address-box').hidden = !address;
+    $('wallet-address-enable').hidden = !!address;
+    $('wallet-address-status').textContent = data.receiving_error ? 'Could not sync npub.cash. Retry with Refresh.' : '';
     $('wallet-balance').textContent = `${data.balance.toLocaleString()} sats`;
     $('wallet-pending').textContent = data.pending ? `${data.pending} sats pending or reserved` : '';
     $('wallet-invoice').value = data.funding_invoice || '';
@@ -210,7 +231,7 @@ window.WalletUI = (() => {
       for (const token of data.pending_tokens) {
         const button = document.createElement('button');
         button.textContent = `${token.amount} sats · Show token QR`;
-        button.onclick = () => run('wallet_show_token', { operation: token.id }, showTransfer, 'Share this token only once.');
+        button.onclick = () => run('wallet_show_token', { operation: token.id }, showTransfer);
         pending.append(button);
       }
     }
@@ -219,19 +240,74 @@ window.WalletUI = (() => {
     const revision = generation;
     const list = await invoke('wallet_list', { account: account.id });
     if (revision !== generation) return;
-    const picker = $('wallet-picker');
-    picker.replaceChildren();
-    for (const wallet of list.wallets || []) {
-      const option = document.createElement('option');
-      option.value = wallet.id;
-      option.textContent = wallet.label;
-      picker.append(option);
-    }
-    picker.value = list.active;
-    picker.hidden = currentView !== 'mint' || (list.wallets || []).length < 2;
+    renderMints(list);
   }
 
-  async function run(command, args = {}, apply = render, success = 'Wallet refreshed.') {
+  function renderMints(list) {
+    const revision = generation;
+    const picker = $('wallet-picker');
+    picker.replaceChildren();
+    const saved = new Map();
+    for (const wallet of list.wallets || []) {
+      if (!saved.has(wallet.label) || wallet.id === list.active) saved.set(wallet.label, wallet);
+    }
+    if (!saved.has(DEFAULT_MINT)) saved.set(DEFAULT_MINT, { label: DEFAULT_MINT });
+    const mints = [...saved.values()].sort((a, b) => a.label === DEFAULT_MINT ? -1 : b.label === DEFAULT_MINT ? 1 : a.label.localeCompare(b.label));
+    for (const mint of mints) {
+      const button = document.createElement('button');
+      button.className = 'mint-row';
+      button.type = 'button';
+      if (mint.label === DEFAULT_MINT) button.id = 'wallet-mint-default';
+      const selected = !!mint.id && mint.id === list.active;
+      button.setAttribute('aria-pressed', String(selected));
+      button.disabled = busy || !unlocked;
+      const name = document.createElement('span');
+      name.textContent = mint.label === DEFAULT_MINT ? 'Minibits' : mint.label.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const mark = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      mark.setAttribute('class', 'glyph'); mark.setAttribute('viewBox', '0 0 24 24');
+      mark.setAttribute('fill', 'none'); mark.setAttribute('stroke', 'currentColor');
+      mark.setAttribute('stroke-width', '1.75'); mark.setAttribute('stroke-linecap', 'round');
+      mark.setAttribute('stroke-linejoin', 'round'); mark.setAttribute('aria-hidden', 'true');
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      icon.setAttribute('d', selected ? 'm20 6-11 11-5-5' : 'm9 18 6-6-6-6'); mark.append(icon);
+      button.append(name, mark);
+      button.onclick = () => {
+        if (busy || !unlocked || !account || revision !== generation) return;
+        if (selected) { show('home'); return; }
+        clearReview();
+        return run(mint.id ? 'wallet_select' : 'wallet_set_mint', mint.id ? { slot: mint.id } : { mint: mint.label }, async data => {
+          const revision = generation;
+          await render(data);
+          if (revision === generation) show('home');
+        });
+      };
+      picker.append(button);
+    }
+    picker.hidden = currentView !== 'mint';
+  }
+
+  async function loadConnections() {
+    if (!account) return;
+    const revision = generation;
+    try {
+      const connections = await invoke('nwc_connections', { account: account.id });
+      if (revision !== generation) return;
+      const box = $('wallet-nwc-connections');
+      box.replaceChildren();
+      for (const connection of connections) {
+        const row = document.createElement('div'); row.className = 'nwc-connection';
+        const name = document.createElement('span'); name.textContent = connection.label;
+        const revoke = document.createElement('button'); revoke.textContent = 'Revoke'; revoke.className = 'danger';
+        revoke.disabled = busy || !unlocked;
+        revoke.onclick = () => run('nwc_revoke', { id: connection.id }, async () => { hideCodes(); await loadConnections(); });
+        row.append(name, revoke); box.append(row);
+      }
+    } catch (error) {
+      if (revision === generation) $('wallet-status').textContent = 'Could not load zap connections.';
+    }
+  }
+
+  async function run(command, args = {}, apply = render) {
     if (busy || !account || !unlocked) return;
     const loading = loadCommands.has(command);
     if (loading) {
@@ -253,16 +329,15 @@ window.WalletUI = (() => {
     const revision = generation;
     const selected = account.id;
     const exposure = exposureGeneration;
-    $('wallet-status').textContent = command === 'wallet_pay' ? 'Sending payment…'
-      : loading ? 'Loading wallet…' : 'Working…';
+    $('wallet-status').textContent = '';
     try {
       const data = await invoke(command, { ...args, account: selected });
       if (revision !== generation) return;
-      if (['wallet_show_token', 'wallet_send_token', 'pair_bunker'].includes(command) && exposure !== exposureGeneration) return;
+      if (['wallet_show_token', 'wallet_send_token', 'pair_bunker', 'nwc_pair'].includes(command) && exposure !== exposureGeneration) return;
       await apply(data);
       if (revision !== generation) return;
       if (loading) retryDelay = 2000;
-      $('wallet-status').textContent = success;
+      $('wallet-status').textContent = '';
     } catch (error) {
       if (revision !== generation) return;
       if (loading && retryableErrors.has(String(error))) {
@@ -292,6 +367,15 @@ window.WalletUI = (() => {
 
   function init(call) {
     invoke = call;
+    $('wallet-address-enable').onclick = () => run('wallet_enable_address');
+    $('wallet-address-show').onclick = () => drawQR($('wallet-address-value').value, 'wallet-address');
+    $('wallet-address-copy').onclick = async () => {
+      const address = $('wallet-address-value').value;
+      if (!address) return;
+      const revision = generation;
+      try { await navigator.clipboard.writeText(address); }
+      catch { if (revision === generation) $('wallet-address-status').textContent = 'Select and copy the address.'; }
+    };
     for (const id of ['wallet-request', 'wallet-send-amount', 'wallet-zap-address', 'wallet-zap-recipient', 'wallet-zap-amount', 'wallet-zap-note']) $(id).oninput = clearReview;
     $('wallet-open').onclick = $('wallet-refresh').onclick = () => { clearReview(); return run('wallet_open'); };
     const submit = (id, action) => { $(id).onsubmit = event => { event.preventDefault(); action(); }; };
@@ -319,14 +403,10 @@ window.WalletUI = (() => {
         $('wallet-backup-words').hidden = false;
         data.words = null;
         backupTimer = setTimeout(hideBackup, 60_000);
-      }, '');
+      });
     };
     window.addEventListener?.('blur', hideSecrets);
     document.addEventListener?.('visibilitychange', () => { if (document.hidden) hideSecrets(); });
-    $('wallet-picker').onchange = () => {
-      clearReview();
-      run('wallet_select', { slot: $('wallet-picker').value }, render, 'Wallet selected.');
-    };
     const chooseMint = () => {
       if (busy || !account || !unlocked) return;
       clearReview();
@@ -336,20 +416,26 @@ window.WalletUI = (() => {
         if (revision !== generation) return;
         $('wallet-token').value = '';
         show('home');
-      }, 'Mint selected. Existing funds stay at their original mint.');
+      });
     };
     submit('wallet-mint-form', chooseMint);
-    $('wallet-mint-default').onclick = () => {
-      $('wallet-mint-url').value = DEFAULT_MINT;
-      return chooseMint();
+    $('wallet-mint-add').onclick = () => {
+      $('wallet-mint-add').hidden = true;
+      $('wallet-mint-form').hidden = false;
+      $('wallet-mint-url').value = '';
+      $('wallet-mint-url').focus();
+    };
+    $('wallet-mint-cancel').onclick = () => {
+      $('wallet-mint-form').hidden = true;
+      $('wallet-mint-add').hidden = false;
     };
     submit('wallet-fund-form', () => run('wallet_fund', { amount: Number($('wallet-fund-amount').value) }, async data => {
       $('wallet-invoice').value = data.invoice;
       $('wallet-invoice-box').hidden = false;
       await drawQR(data.invoice, 'wallet-invoice');
-    }, 'Refresh after paying.'));
+    }));
     $('wallet-copy-invoice').onclick = async () => {
-      try { await navigator.clipboard.writeText($('wallet-invoice').value); $('wallet-status').textContent = 'Invoice copied.'; }
+      try { await navigator.clipboard.writeText($('wallet-invoice').value); $('wallet-status').textContent = ''; }
       catch { $('wallet-status').textContent = 'Select and copy the invoice above.'; }
     };
     $('wallet-token').onchange = inspectIncoming;
@@ -362,20 +448,34 @@ window.WalletUI = (() => {
       return run('wallet_reclaim_token', { operation }, async data => {
         await render(data);
         if (revision === generation) show('home');
-      }, 'Unspent token reclaimed.');
+      });
     };
     for (const [button, field] of [['wallet-share-copy', 'wallet-share-token']]) {
       $(button).onclick = async () => {
         if (!$(field).value) return;
-        try { await navigator.clipboard.writeText($(field).value); $('wallet-status').textContent = 'Copied.'; }
+        try { await navigator.clipboard.writeText($(field).value); $('wallet-status').textContent = ''; }
         catch { $('wallet-status').textContent = 'Select and copy the text above.'; }
       };
     }
+    submit('wallet-nwc-form', () => run('nwc_pair', { label: $('wallet-nwc-name').value }, async uri => {
+      hideCodes();
+      $('wallet-nwc-uri').value = uri;
+      $('wallet-nwc-qr-box').hidden = false;
+      await drawQR(uri, 'wallet-nwc');
+      await loadConnections();
+    }));
+    $('wallet-nwc-copy').onclick = async () => {
+      const uri = $('wallet-nwc-uri').value;
+      if (!uri) return;
+      const exposure = exposureGeneration;
+      try { await navigator.clipboard.writeText(uri); }
+      catch { if (exposure === exposureGeneration) $('wallet-status').textContent = 'Select and copy the connection link.'; }
+    };
     $('wallet-nostr-code').onclick = () => run('pair_bunker', {}, async uri => {
       $('wallet-nostr-uri').value = uri;
       $('wallet-nostr-qr-box').hidden = false;
       await drawQR(uri, 'wallet-nostr');
-    }, 'Scan this code from your Nostr app to connect.');
+    });
     $('wallet-nostr-copy').onclick = () => run('pair_bunker', {}, async uri => {
       hideCodes();
       $('wallet-nostr-uri').value = uri;
@@ -386,7 +486,7 @@ window.WalletUI = (() => {
         $('wallet-nostr-qr-box').hidden = false;
         throw new Error('Select and copy the bunker URL.');
       }
-    }, 'Bunker URL copied.');
+    });
     submit('wallet-nostr-connect-form', () => {
       const uri = $('wallet-nostr-connect-uri').value.trim();
       if (!uri.startsWith('nostrconnect://')) {
@@ -395,19 +495,19 @@ window.WalletUI = (() => {
       }
       return run('pair_client', { uri }, () => {
         $('wallet-nostr-connect-uri').value = '';
-      }, 'Nostr app connected.');
+      });
     });
     submit('wallet-send-form', () => {
       clearReview();
-      return run('wallet_review_send', { amount: Number($('wallet-send-amount').value) }, data => payment(data, 'cashu'), 'Review the amount and fees before creating a token.');
+      return run('wallet_review_send', { amount: Number($('wallet-send-amount').value) }, data => payment(data, 'cashu'));
     });
     submit('wallet-receive-form', () => run('wallet_receive', { token: $('wallet-token').value }, data => {
       $('wallet-token').value = ''; return render(data);
-    }, 'Token received.'));
-    submit('wallet-pay-form', () => { clearReview(); run('wallet_review', { request: $('wallet-request').value }, payment, 'Review the destination, amount, and fees before paying.'); });
+    }));
+    submit('wallet-pay-form', () => { clearReview(); run('wallet_review', { request: $('wallet-request').value }, payment); });
     submit('wallet-zap-form', () => {
       clearReview();
-      run('wallet_zap', { zap: { address: $('wallet-zap-address').value, recipient: $('wallet-zap-recipient').value, amount: Number($('wallet-zap-amount').value), note: $('wallet-zap-note').value } }, payment, 'Zap request signed. Approve the payment to send funds.');
+      run('wallet_zap', { zap: { address: $('wallet-zap-address').value, recipient: $('wallet-zap-recipient').value, amount: Number($('wallet-zap-amount').value), note: $('wallet-zap-note').value } }, payment);
     });
     $('wallet-confirm').onclick = () => {
       if (busy || !review) return;
@@ -418,21 +518,21 @@ window.WalletUI = (() => {
         const revision = generation, exposure = exposureGeneration;
         await render(data.wallet);
         if (revision === generation && exposure === exposureGeneration) await showTransfer(data.transfer);
-      }, 'Token created. Share it once; it stays available in Pending tokens.');
+      });
       return run('wallet_pay', { quote }, async data => {
         const revision = generation;
         await render(data);
         if (revision === generation) show('home');
-      }, 'Payment submitted. Check its transaction status; Refresh reconciles pending payments.');
+      });
     };
     $('wallet-cancel').onclick = () => {
       if (busy) return;
       clearReview();
       invoke('wallet_cancel', { account: account.id }).catch(() => {});
       show('home');
-      $('wallet-status').textContent = 'Cancelled.';
+      $('wallet-status').textContent = '';
     };
-    $('wallet-restore').onclick = () => run('wallet_restore', {}, render, 'Recovery finished.');
+    $('wallet-restore').onclick = () => run('wallet_restore', {}, render);
   }
 
   function scan(value) {
@@ -449,7 +549,7 @@ window.WalletUI = (() => {
     $('wallet-request').focus();
   }
   function open(refresh = false) {
-    if (refresh || (!opened && !openAttempted)) return run('wallet_open', {}, render, '');
+    if (refresh || (!opened && !openAttempted)) return run('wallet_open', {}, render);
   }
   return { init, sync, scan, show, open, hideBackup, hideSecrets };
 })();

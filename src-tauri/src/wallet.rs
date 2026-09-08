@@ -224,7 +224,9 @@ mod tests {
         service.approvals.lock().unwrap().insert(
             "quote".into(),
             Approval {
+                quote: "mint-quote".into(),
                 account: 1,
+                mint: MINT.into(),
                 invoice: "invoice".into(),
                 maximum: 100,
                 expiry: now() + 60,
@@ -234,6 +236,33 @@ mod tests {
         service.lock();
         assert!(service.approvals.lock().unwrap().is_empty());
         assert_eq!(service.epoch.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn concurrent_reviews_of_the_same_mint_quote_keep_separate_fee_limits() {
+        let service = WalletService::default();
+        let make = |maximum| Approval {
+            quote: "same-mint-quote".into(),
+            account: 1,
+            mint: MINT.into(),
+            invoice: "same-invoice".into(),
+            maximum,
+            expiry: now() + 60,
+            epoch: 0,
+        };
+        let first = service.record_review(make(22)).unwrap();
+        let second = service.record_review(make(25)).unwrap();
+        assert_ne!(first, second);
+        limit_review(&service, &first, now() + 10);
+        let mut approvals = service.approvals.lock().unwrap();
+        let first_approval = approvals.remove(&first).unwrap();
+        assert_eq!(first_approval.maximum, 22);
+        assert_eq!(approvals.get(&second).unwrap().maximum, 25);
+        assert!(first_approval.expiry < approvals.get(&second).unwrap().expiry);
+        assert!(approvals.remove(&first).is_none());
+        drop(approvals);
+        service.lock();
+        assert!(service.record_review(make(22)).is_err());
     }
 
     #[test]
@@ -309,7 +338,9 @@ pub struct WalletService {
 }
 
 struct Approval {
+    quote: String,
     account: i64,
+    mint: String,
     invoice: String,
     maximum: u64,
     expiry: u64,
@@ -317,6 +348,21 @@ struct Approval {
 }
 
 impl WalletService {
+    fn record_review(&self, approval: Approval) -> Result<String> {
+        let mut approvals = self.approvals.lock().unwrap_or_else(|e| e.into_inner());
+        approvals.retain(|_, saved| saved.expiry > now());
+        ensure!(approvals.len() < 32, "too many payment reviews");
+        ensure!(
+            approval.epoch == self.epoch.load(Ordering::SeqCst),
+            "wallet locked during review"
+        );
+        // A mint can reuse a quote id. Each displayed review still needs its own
+        // immutable fee ceiling and one-shot confirmation handle.
+        let id = nostr::key::Keys::generate().public_key().to_hex();
+        approvals.insert(id.clone(), approval);
+        Ok(id)
+    }
+
     pub fn lock(&self) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
         self.approvals
@@ -338,6 +384,8 @@ pub struct WalletView {
     transactions: Vec<TransactionView>,
     funding_invoice: Option<String>,
     pending_tokens: Vec<PendingTokenView>,
+    lightning_address: Option<crate::npubcash::Address>,
+    receiving_error: bool,
 }
 
 #[derive(Serialize)]
@@ -355,14 +403,14 @@ pub struct InvoiceView {
     expiry: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct PaymentView {
-    quote: String,
-    amount: u64,
-    max_fee: u64,
-    maximum: u64,
-    expiry: u64,
-    destination: String,
+    pub(crate) quote: String,
+    pub(crate) amount: u64,
+    pub(crate) max_fee: u64,
+    pub(crate) maximum: u64,
+    pub(crate) expiry: u64,
+    pub(crate) destination: String,
 }
 
 fn now() -> u64 {
@@ -373,6 +421,7 @@ fn now() -> u64 {
 }
 
 fn original_wallet_path(app: &AppHandle, state: &AppState, account: i64) -> Result<PathBuf> {
+    crate::migration::ensure_account(app, state, account)?;
     let identity = state
         .storage
         .account(AccountId::new(account))?
@@ -463,7 +512,7 @@ async fn recover_on_open(wallet: &Wallet, path: &std::path::Path, seed: &[u8; 64
 
 fn database_password(seed: &[u8; 64]) -> Zeroizing<String> {
     let mut hash = Sha256::new();
-    hash.update(b"byrgi/cashu/database/v1\0");
+    hash.update(b"cashr/cashu/database/v1\0");
     hash.update(&seed[..]);
     Zeroizing::new(format!("{:x}", hash.finalize()))
 }
@@ -481,9 +530,9 @@ fn write_recovery(
     phrase: &str,
     passphrase_required: bool,
 ) -> Result<()> {
-    conn.execute_batch("CREATE TABLE IF NOT EXISTS byrgi_master_recovery (id INTEGER PRIMARY KEY CHECK(id = 1), phrase TEXT NOT NULL, passphrase_required INTEGER NOT NULL);")?;
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS cashr_master_recovery (id INTEGER PRIMARY KEY CHECK(id = 1), phrase TEXT NOT NULL, passphrase_required INTEGER NOT NULL);")?;
     conn.execute(
-        "INSERT OR REPLACE INTO byrgi_master_recovery VALUES (1, ?1, ?2)",
+        "INSERT OR REPLACE INTO cashr_master_recovery VALUES (1, ?1, ?2)",
         rusqlite::params![phrase, passphrase_required],
     )?;
     Ok(())
@@ -497,7 +546,7 @@ fn read_recovery(
         rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     conn.pragma_update(None, "key", database_password(identity_seed).as_str())?;
     Ok(conn.query_row(
-        "SELECT phrase, passphrase_required FROM byrgi_master_recovery WHERE id = 1",
+        "SELECT phrase, passphrase_required FROM cashr_master_recovery WHERE id = 1",
         [],
         |row| Ok((Zeroizing::new(row.get::<_, String>(0)?), row.get(1)?)),
     )?)
@@ -536,7 +585,7 @@ fn wallet_profile(path: &std::path::Path, password: &str) -> Result<(Zeroizing<[
         .context(WalletFailure::Storage)?;
     let (bytes, mint): (Vec<u8>, String) = conn
         .query_row(
-            "SELECT seed, mint FROM byrgi_wallet_profile WHERE id = 1",
+            "SELECT seed, mint FROM cashr_wallet_profile WHERE id = 1",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -573,6 +622,8 @@ async fn view(wallet: &Wallet) -> Result<WalletView> {
     let mut transactions = wallet.list_transactions(None).await?;
     transactions.sort_by_key(|tx| std::cmp::Reverse(tx.timestamp));
     Ok(WalletView {
+        lightning_address: crate::npubcash::saved(wallet).await?,
+        receiving_error: crate::npubcash::failed(wallet, None).await?,
         pending_tokens: pending_tokens(wallet).await?,
         funding_invoice: wallet
             .localstore
@@ -655,10 +706,103 @@ pub async fn wallet_open(
             .mint_unissued_quotes()
             .await
             .context(WalletFailure::Sync)?;
+        refresh_receiving(&wallet, &state, AccountId::new(account)).await;
         view(&wallet).await.context(WalletFailure::Storage)
     }
     .await
     .map_err(error)
+}
+
+async fn refresh_receiving(wallet: &Wallet, state: &AppState, account: AccountId) -> u64 {
+    let result: Result<u64> = async {
+        crate::npubcash::discover(wallet, state, account).await?;
+        // Existing provider payments may predate Cashr's quote-locking setup.
+        // Collect those too, without changing where future payments are routed.
+        let amount = crate::npubcash::collect(wallet, state, account).await?;
+        if let Some(address) = crate::npubcash::saved(wallet).await? {
+            let existing = state.storage.account(account)?.lightning_address;
+            if existing
+                .as_deref()
+                .is_none_or(|s| s.ends_with("@npub.cash"))
+            {
+                state
+                    .storage
+                    .set_lightning_address(account, Some(&address.address))?;
+            }
+        }
+        Ok(amount)
+    }
+    .await;
+    let _ = crate::npubcash::failed(wallet, Some(result.is_err())).await;
+    result.unwrap_or(0)
+}
+
+#[tauri::command]
+pub async fn wallet_enable_address(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    service: State<'_, WalletService>,
+    account: i64,
+) -> Result<WalletView, String> {
+    let _guard = service.gate.lock().await;
+    async {
+        let wallet = open(&app, &state, account).await?;
+        crate::npubcash::enable(&wallet, &state, AccountId::new(account)).await?;
+        refresh_receiving(&wallet, &state, AccountId::new(account)).await;
+        view(&wallet).await
+    }
+    .await
+    .map_err(|_: anyhow::Error| "Could not enable npub.cash. Try again.".into())
+}
+
+/// Collect on every saved mint, even while the tray window is closed. Skip busy
+/// wallets so background receiving never queues ahead of a payment approval.
+pub fn start_receiving(app: &AppHandle) {
+    use tauri::Emitter;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let state = app.state::<AppState>();
+            for account in state.accounts().unwrap_or_default() {
+                if !state.session.vault().holds(account.id) {
+                    continue;
+                }
+                let service = app.state::<WalletService>();
+                let Ok(_guard) = service.gate.try_lock() else {
+                    continue;
+                };
+                let result: Result<()> = async {
+                    let seed =
+                        Zeroizing::new(state.session.vault().wallet_storage_seed(account.id)?);
+                    let original = original_wallet_path(&app, &state, account.id.get())?;
+                    for choice in wallet_choices(&original, &seed)? {
+                        if !state.session.vault().holds(account.id) {
+                            break;
+                        }
+                        let wallet = open_path(
+                            slot_path(&original, &choice.id)?,
+                            &seed,
+                            choice.id != "original",
+                        )
+                        .await?;
+                        // Discovery also recovers the address after importing the phrase.
+                        let before = crate::npubcash::saved(&wallet).await?.map(|a| a.address);
+                        let amount = refresh_receiving(&wallet, &state, account.id).await;
+                        let after = crate::npubcash::saved(&wallet).await?.map(|a| a.address);
+                        if amount > 0 || before != after {
+                            let _ = app.emit("wallet://received", account.id.get());
+                        }
+                    }
+                    Ok(())
+                }
+                .await;
+                if result.is_err() {
+                    tracing::debug!("Receiving sync will retry");
+                }
+            }
+        }
+    });
 }
 
 #[tauri::command]
@@ -752,24 +896,17 @@ async fn review(
         .ok_or_else(|| anyhow!("amount overflow"))?;
     prepared.cancel().await?;
     ensure!(quote.expiry > now(), "expired quote");
-    let mut approvals = service.approvals.lock().unwrap_or_else(|e| e.into_inner());
-    approvals.retain(|_, approval| approval.expiry > now() && approval.account != account);
-    ensure!(
-        epoch == service.epoch.load(Ordering::SeqCst),
-        "wallet locked during review"
-    );
-    approvals.insert(
-        quote.id.clone(),
-        Approval {
-            account,
-            invoice: request,
-            maximum,
-            expiry: quote.expiry,
-            epoch,
-        },
-    );
-    Ok(PaymentView {
+    let review_id = service.record_review(Approval {
         quote: quote.id,
+        account,
+        mint: wallet.mint_url.to_string(),
+        invoice: request,
+        maximum,
+        expiry: quote.expiry,
+        epoch,
+    })?;
+    Ok(PaymentView {
+        quote: review_id,
         amount,
         max_fee,
         maximum,
@@ -824,36 +961,99 @@ pub async fn wallet_pay(
     quote: String,
 ) -> Result<WalletView, String> {
     let _guard = service.gate.lock().await;
+    let (wallet, _) = pay_reviewed(&app, &state, &service, account, &quote)
+        .await
+        .map_err(error)?;
+    view(&wallet).await.map_err(error)
+}
+
+// Caller holds the wallet gate through confirmation and recording the result.
+pub(crate) async fn pay_reviewed(
+    app: &AppHandle,
+    state: &AppState,
+    service: &WalletService,
+    account: i64,
+    quote: &str,
+) -> Result<(Wallet, cdk::types::FinalizedMelt)> {
     let approval = service
         .approvals
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .remove(&quote)
-        .ok_or("Review this payment again before paying.")?;
-    if approval.account != account || approval.expiry <= now() {
-        return Err("Payment review expired. Review it again.".into());
+        .remove(quote)
+        .ok_or_else(|| anyhow!("Review this payment again before paying."))?;
+    ensure!(
+        approval.account == account && approval.expiry > now(),
+        "Payment review expired."
+    );
+    let wallet = open(app, state, account).await?;
+    ensure!(
+        wallet.mint_url.to_string() == approval.mint,
+        "Mint changed. Review payment again."
+    );
+    invoice(&approval.invoice)?;
+    let prepared = wallet.prepare_melt(&approval.quote, HashMap::new()).await?;
+    let total: u64 =
+        (prepared.amount() + prepared.total_fee() + prepared.quote().fee_reserve).into();
+    if approval.expiry <= now()
+        || total > approval.maximum
+        || prepared.quote().request != approval.invoice
+        || !state.session.vault().holds(AccountId::new(account))
+        || approval.epoch != service.epoch.load(Ordering::SeqCst)
+    {
+        prepared.cancel().await?;
+        bail!("payment changed or wallet locked");
     }
-    async {
-        let wallet = open(&app, &state, account).await?;
-        invoice(&approval.invoice)?;
-        let prepared = wallet.prepare_melt(&quote, HashMap::new()).await?;
-        let total: u64 =
-            (prepared.amount() + prepared.total_fee() + prepared.quote().fee_reserve).into();
-        if total > approval.maximum
-            || prepared.quote().request != approval.invoice
-            || !state.session.vault().holds(AccountId::new(account))
-            || approval.epoch != service.epoch.load(Ordering::SeqCst)
-        {
-            prepared.cancel().await?;
-            bail!("payment changed or wallet locked");
-        }
-        // Once confirmed, finish recording the result even if the user locks.
-        // Dropping an in-flight Lightning request is not a cancellation.
-        prepared.confirm().await?;
-        view(&wallet).await
+    // Never cancel an in-flight Lightning payment when the window closes or locks.
+    let result = prepared.confirm().await?;
+    Ok((wallet, result))
+}
+
+pub(crate) async fn nwc_review(
+    app: &AppHandle,
+    state: &AppState,
+    service: &WalletService,
+    account: i64,
+    request: String,
+    mint: &str,
+) -> Result<PaymentView> {
+    let _guard = service.gate.lock().await;
+    let epoch = service.epoch.load(Ordering::SeqCst);
+    let wallet = open(app, state, account).await?;
+    ensure!(
+        wallet.mint_url.to_string() == mint,
+        "Select the mint used by this connection."
+    );
+    let destination = invoice(&request)?.get_payee_pub_key().to_string();
+    review(&wallet, service, account, request, destination, epoch).await
+}
+
+pub(crate) async fn nwc_mint(
+    app: &AppHandle,
+    state: &AppState,
+    service: &WalletService,
+    account: i64,
+) -> Result<String> {
+    let _guard = service.gate.lock().await;
+    Ok(open(app, state, account).await?.mint_url.to_string())
+}
+
+pub(crate) fn limit_review(service: &WalletService, quote: &str, expiry: u64) {
+    if let Some(approval) = service
+        .approvals
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_mut(quote)
+    {
+        approval.expiry = approval.expiry.min(expiry);
     }
-    .await
-    .map_err(error)
+}
+
+pub(crate) fn cancel_review(service: &WalletService, quote: &str) {
+    service
+        .approvals
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(quote);
 }
 
 /// Explicit seed recovery for a re-imported identity. Local SQLCipher data is
@@ -1384,6 +1584,7 @@ pub async fn create_account(
         state.lock();
         bail!("Unlock cancelled.");
     }
+    crate::migration::ensure_identity(app, state, &identity)?;
     let path = wallet_path_for_identity(app, identity.public_key())?;
     initialize_wallet(
         &path,
@@ -1461,7 +1662,7 @@ pub(crate) fn create_error(error: anyhow::Error) -> String {
         .into()
 }
 
-fn import_mint(value: &str) -> Result<String> {
+pub(crate) fn import_mint(value: &str) -> Result<String> {
     ensure!(value.len() < 2048, "mint URL too long");
     let url = url::Url::parse(value.trim())?;
     ensure!(
@@ -1483,7 +1684,7 @@ async fn store_mint(
     mint: &str,
 ) -> Result<String> {
     let mut hash = Sha256::new();
-    hash.update(b"byrgi/cashu/import/v1\0");
+    hash.update(b"cashr/cashu/import/v1\0");
     hash.update(seed);
     hash.update(mint.as_bytes());
     let slot = format!("{:x}", hash.finalize());
@@ -1504,9 +1705,9 @@ async fn store_wallet_file(
         {
             let conn = rusqlite::Connection::open(&temporary)?;
             conn.pragma_update(None, "key", password.as_str())?;
-            conn.execute_batch("CREATE TABLE IF NOT EXISTS byrgi_wallet_profile (id INTEGER PRIMARY KEY CHECK(id = 1), seed BLOB NOT NULL, mint TEXT NOT NULL);")?;
+            conn.execute_batch("CREATE TABLE IF NOT EXISTS cashr_wallet_profile (id INTEGER PRIMARY KEY CHECK(id = 1), seed BLOB NOT NULL, mint TEXT NOT NULL);")?;
             conn.execute(
-                "INSERT OR REPLACE INTO byrgi_wallet_profile VALUES (1, ?1, ?2)",
+                "INSERT OR REPLACE INTO cashr_wallet_profile VALUES (1, ?1, ?2)",
                 rusqlite::params![&seed[..], mint],
             )?;
         }
