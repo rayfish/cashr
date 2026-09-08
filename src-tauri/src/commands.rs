@@ -341,6 +341,62 @@ pub fn rules(state: State<'_, AppState>, client: i64) -> CommandResult<Vec<RuleV
 }
 
 #[tauri::command]
+pub fn set_client_allow_all(
+    state: State<'_, AppState>,
+    account: i64,
+    client: i64,
+    allow: bool,
+) -> CommandResult<()> {
+    let account = AccountId::new(account);
+    change_client_allow_all(
+        &state.storage,
+        account,
+        ClientId::new(client),
+        allow,
+        state.session.vault().holds(account),
+    )
+}
+
+fn change_client_allow_all(
+    storage: &signer_core::storage::Storage,
+    account: AccountId,
+    client: ClientId,
+    allow: bool,
+    unlocked: bool,
+) -> CommandResult<()> {
+    if allow && !unlocked {
+        return Err("Unlock this account first.".into());
+    }
+    storage
+        .set_client_allow_all(account, client, allow)
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn deny_client_actions(
+    state: State<'_, AppState>,
+    account: i64,
+    client: i64,
+) -> CommandResult<()> {
+    state
+        .storage
+        .deny_client_actions(AccountId::new(account), ClientId::new(client))
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn forget_client_rules(
+    state: State<'_, AppState>,
+    account: i64,
+    client: i64,
+) -> CommandResult<()> {
+    state
+        .storage
+        .forget_client_rules(AccountId::new(account), ClientId::new(client))
+        .map_err(fail)
+}
+
+#[tauri::command]
 pub fn set_rule(
     state: State<'_, AppState>,
     client: i64,
@@ -514,6 +570,29 @@ mod activity_tests {
     use super::*;
     use nostr::{event::Kind, key::Keys, nips::nip46::NostrConnectMethod};
     use signer_core::storage::{ActivityOutcome, ActivitySource, NewAccount, NewActivity, Storage};
+
+    #[test]
+    fn allowing_all_requires_unlock_but_can_be_disabled_while_locked() {
+        let storage = Storage::in_memory().unwrap();
+        let account = storage
+            .insert_account(NewAccount {
+                identity_public_key: Keys::generate().public_key(),
+                signer_public_key: Keys::generate().public_key(),
+                label: "fixture".into(),
+                relays: vec![],
+                is_default: true,
+            })
+            .unwrap();
+        let client = storage
+            .upsert_client(account.id, &Keys::generate().public_key(), Some("fixture"))
+            .unwrap();
+        assert!(change_client_allow_all(&storage, account.id, client.id, true, false).is_err());
+        assert!(!storage.clients(account.id).unwrap()[0].allow_all);
+        change_client_allow_all(&storage, account.id, client.id, true, true).unwrap();
+        assert!(storage.clients(account.id).unwrap()[0].allow_all);
+        change_client_allow_all(&storage, account.id, client.id, false, false).unwrap();
+        assert!(!storage.clients(account.id).unwrap()[0].allow_all);
+    }
 
     #[test]
     fn remembering_history_is_scoped_and_rejects_locked_revoked_or_missing_clients() {

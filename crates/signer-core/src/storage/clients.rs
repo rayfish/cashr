@@ -49,7 +49,7 @@ impl Storage {
         let conn = self.conn();
         Ok(conn
             .query_row(
-                "SELECT id, account_id, public_key, name, first_seen, last_seen, revoked_at, removed_at
+                "SELECT id, account_id, public_key, name, first_seen, last_seen, revoked_at, removed_at, allow_all, deny_all
                  FROM clients WHERE account_id = ?1 AND public_key = ?2",
                 params![account.get(), public_key.to_hex()],
                 row_to_client,
@@ -60,7 +60,7 @@ impl Storage {
     pub fn clients(&self, account: AccountId) -> Result<Vec<Client>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, account_id, public_key, name, first_seen, last_seen, revoked_at, removed_at
+            "SELECT id, account_id, public_key, name, first_seen, last_seen, revoked_at, removed_at, allow_all, deny_all
              FROM clients
              WHERE account_id = ?1 AND removed_at IS NULL
              ORDER BY last_seen DESC",
@@ -79,13 +79,64 @@ impl Storage {
         Ok(())
     }
 
+    /// Change only this account's active pairing, preserving individual rules.
+    pub fn set_client_allow_all(
+        &self,
+        account: AccountId,
+        client: ClientId,
+        allow: bool,
+    ) -> Result<()> {
+        let changed = self.conn().execute(
+            "UPDATE clients SET allow_all = ?3, deny_all = 0 WHERE id = ?1 AND account_id = ?2
+             AND revoked_at IS NULL AND removed_at IS NULL",
+            params![client.get(), account.get(), allow],
+        )?;
+        if changed == 0 {
+            return Err(SignerError::UnknownClient);
+        }
+        Ok(())
+    }
+
+    /// Block this app's Nostr actions, including individually allowed ones.
+    pub fn deny_client_actions(&self, account: AccountId, client: ClientId) -> Result<()> {
+        let changed = self.conn().execute(
+            "UPDATE clients SET allow_all = 0, deny_all = 1
+             WHERE id = ?1 AND account_id = ?2 AND revoked_at IS NULL AND removed_at IS NULL",
+            params![client.get(), account.get()],
+        )?;
+        if changed == 0 {
+            return Err(SignerError::UnknownClient);
+        }
+        Ok(())
+    }
+
+    /// Return to prompting by atomically clearing app-wide and individual rules.
+    pub fn forget_client_rules(&self, account: AccountId, client: ClientId) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let changed = tx.execute(
+            "UPDATE clients SET allow_all = 0, deny_all = 0
+             WHERE id = ?1 AND account_id = ?2 AND revoked_at IS NULL AND removed_at IS NULL",
+            params![client.get(), account.get()],
+        )?;
+        if changed == 0 {
+            return Err(SignerError::UnknownClient);
+        }
+        tx.execute(
+            "DELETE FROM policies WHERE client_id = ?1",
+            params![client.get()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Revoke access. Stored rules go with it, so re-pairing starts from a
     /// clean slate rather than silently inheriting old permissions.
     pub fn revoke_client(&self, id: ClientId) -> Result<()> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let changed = tx.execute(
-            "UPDATE clients SET revoked_at = ?2 WHERE id = ?1 AND revoked_at IS NULL",
+            "UPDATE clients SET revoked_at = ?2, allow_all = 0, deny_all = 0 WHERE id = ?1 AND revoked_at IS NULL",
             params![id.get(), Timestamp::now().as_secs() as i64],
         )?;
         if changed == 0 {
@@ -116,7 +167,7 @@ impl Storage {
         let tx = conn.transaction()?;
         let changed = tx.execute(
             "UPDATE clients
-             SET revoked_at = coalesce(revoked_at, ?2), removed_at = coalesce(removed_at, ?2)
+             SET revoked_at = coalesce(revoked_at, ?2), removed_at = coalesce(removed_at, ?2), allow_all = 0, deny_all = 0
              WHERE id = ?1",
             params![id.get(), now],
         )?;
@@ -150,5 +201,7 @@ fn row_to_client(row: &Row<'_>) -> rusqlite::Result<Client> {
         last_seen: Timestamp::from_secs(last_seen.max(0) as u64),
         revoked_at: revoked_at.map(|secs| Timestamp::from_secs(secs.max(0) as u64)),
         removed_at: removed_at.map(|secs| Timestamp::from_secs(secs.max(0) as u64)),
+        allow_all: row.get(8)?,
+        deny_all: row.get(9)?,
     })
 }

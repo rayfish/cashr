@@ -93,6 +93,14 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE accounts ADD COLUMN lightning_address TEXT;
     "#,
+    // v5: app-wide Nostr approval, opt-in for each connected client.
+    r#"
+    ALTER TABLE clients ADD COLUMN allow_all INTEGER NOT NULL DEFAULT 0;
+    "#,
+    // v6: app-wide denial, overriding individual allow rules.
+    r#"
+    ALTER TABLE clients ADD COLUMN deny_all INTEGER NOT NULL DEFAULT 0;
+    "#,
 ];
 
 pub fn apply(conn: &Connection) -> Result<()> {
@@ -105,4 +113,37 @@ pub fn apply(conn: &Connection) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn existing_clients_do_not_gain_app_wide_approval_on_upgrade() {
+        let conn = Connection::open_in_memory().unwrap();
+        for sql in &MIGRATIONS[..4] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.execute_batch(
+            "PRAGMA user_version = 4;
+             INSERT INTO accounts (id, identity_public_key, signer_public_key, label, created_at)
+             VALUES (1, 'identity', 'signer', 'fixture', 0);
+             INSERT INTO clients (account_id, public_key, first_seen, last_seen)
+             VALUES (1, 'client', 0, 0);",
+        )
+        .unwrap();
+        apply(&conn).unwrap();
+        let allowed: bool = conn
+            .query_row("SELECT allow_all FROM clients", [], |row| row.get(0))
+            .unwrap();
+        assert!(!allowed);
+        conn.execute("UPDATE clients SET allow_all = 1", [])
+            .unwrap();
+        apply(&conn).unwrap();
+        let allowed: bool = conn
+            .query_row("SELECT allow_all FROM clients", [], |row| row.get(0))
+            .unwrap();
+        assert!(allowed, "reopening must preserve the user's choice");
+    }
 }

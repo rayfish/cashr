@@ -682,6 +682,8 @@ async function refreshClients() {
     if (client.revoked) {
       card.append(el("span", "pill is-deny", "revoked"));
     } else {
+      if (client.allow_all) grow.append(el("span", "pill is-allow", "allow all"));
+      if (client.deny_all) grow.append(el("span", "pill is-deny", "deny all"));
       const rules = el("button", null, "Rules");
       rules.onclick = async () => {
         state.client = client.id;
@@ -730,17 +732,71 @@ async function refreshClients() {
 
 // -------------------------------------------------------------------- rules
 
+let rulesRevision = 0;
+
 async function refreshRules() {
+  const revision = ++rulesRevision;
+  const account = state.account;
+  const client = state.clients.find(app => app.id === state.client);
   const list = $("rule-list");
   list.replaceChildren();
-  if (state.client === null) {
+  if (!client) {
     list.append(empty("No Nostr apps connected."));
     return;
   }
 
-  const rules = await call("rules", { client: state.client });
+  if (!client.revoked) {
+    const card = el("div", "card stack");
+    const heading = el("div", "row");
+    heading.append(el("div", "grow", "All Nostr actions"));
+    if (client.deny_all) heading.append(el("span", "pill is-deny", "deny all"));
+    else if (client.allow_all) heading.append(el("span", "pill is-allow", "allow all"));
+    const actions = el("div", "row");
+    const allow = el("button", "primary", "Allow all");
+    const deny = el("button", null, "Deny all");
+    const forget = el("button", "danger", "Forget all");
+    allow.title = "Always allow Nostr actions while unlocked; explicit deny rules still apply.";
+    deny.title = "Deny all Nostr actions, including actions with saved allow rules.";
+    forget.title = "Clear all saved permissions for this app and ask again.";
+    const resetButtons = () => {
+      allow.disabled = client.allow_all || !state.unlockedAccounts.includes(account);
+      deny.disabled = client.deny_all;
+      forget.disabled = false;
+    };
+    resetButtons();
+    let saving = false;
+    const change = async (button, command, extra = {}) => {
+      if (saving || button.disabled) return;
+      saving = true;
+      for (const action of [allow, deny, forget]) action.disabled = true;
+      try {
+        await call(command, { account, client: client.id, ...extra });
+        await refreshClients();
+        await refreshRules();
+      } catch {
+        // call() already shows the backend error. Keep the saved state visible.
+      } finally {
+        saving = false;
+        resetButtons();
+      }
+    };
+    allow.onclick = () => change(allow, "set_client_allow_all", { allow: true });
+    deny.onclick = () => change(deny, "deny_client_actions");
+    forget.onclick = () => change(forget, "forget_client_rules");
+    actions.append(allow, deny, forget);
+    card.append(heading, actions);
+    list.append(card, el("p", "hint", client.deny_all
+      ? "All Nostr actions are denied, including individually allowed actions."
+      : "Covers signing and private messages. Deny rules and payment approvals still apply."));
+    if (!state.unlockedAccounts.includes(account)) {
+      list.append(el("p", "hint", "Unlock this account to allow all actions."));
+    }
+  }
+
+  const rules = await call("rules", { client: client.id });
+  if (revision !== rulesRevision) return;
   if (rules.length === 0) {
-    list.append(empty("Ask for every request."));
+    list.append(empty(client.revoked ? "This app's access has been revoked." : client.deny_all ? "All Nostr actions are denied." : client.allow_all ? "All Nostr actions are allowed." : "Ask for every request."));
     return;
   }
 
@@ -756,7 +812,7 @@ async function refreshRules() {
     const flip = el("button", null, rule.allow ? "Deny" : "Allow");
     flip.onclick = async () => {
       await call("set_rule", {
-        client: state.client,
+        client: client.id,
         method: rule.method,
         kind: rule.kind,
         allow: !rule.allow,
@@ -767,7 +823,7 @@ async function refreshRules() {
     const clear = el("button", "danger", "Forget");
     clear.onclick = async () => {
       await call("clear_rule", {
-        client: state.client,
+        client: client.id,
         method: rule.method,
         kind: rule.kind,
       });

@@ -49,6 +49,8 @@ pub struct ClientView {
     pub first_seen: u64,
     pub last_seen: u64,
     pub revoked: bool,
+    pub allow_all: bool,
+    pub deny_all: bool,
 }
 
 impl From<&Client> for ClientView {
@@ -60,6 +62,8 @@ impl From<&Client> for ClientView {
             first_seen: client.first_seen.as_secs(),
             last_seen: client.last_seen.as_secs(),
             revoked: client.is_revoked(),
+            allow_all: client.allow_all,
+            deny_all: client.deny_all,
         }
     }
 }

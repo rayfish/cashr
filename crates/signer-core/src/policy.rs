@@ -1,8 +1,8 @@
 //! Permission rules and how a request is matched against them.
 //!
-//! A rule is scoped to a client, a method, and (for `sign_event` only) an event
-//! kind. Matching is most-specific-first: an exact kind rule beats a
-//! method-wide rule, and no match at all means the user is asked.
+//! Deny all takes precedence. Otherwise, a rule is scoped to a client, a method,
+//! and (for `sign_event` only) an event kind. An exact kind rule beats a
+//! method-wide rule, then app-wide approval applies. With no match, ask the user.
 
 use nostr::event::Kind;
 use nostr::nips::nip46::NostrConnectMethod;
@@ -63,19 +63,40 @@ impl Rule {
 #[derive(Debug, Clone, Default)]
 pub struct PolicySet {
     rules: Vec<Rule>,
+    allow_all: bool,
+    deny_all: bool,
 }
 
 impl PolicySet {
     pub fn new(rules: Vec<Rule>) -> Self {
-        Self { rules }
+        Self {
+            rules,
+            allow_all: false,
+            deny_all: false,
+        }
+    }
+
+    /// App-wide approval is a fallback; explicit deny rules still apply.
+    pub fn with_allow_all(mut self, allow_all: bool) -> Self {
+        self.allow_all = allow_all;
+        self
+    }
+
+    /// Deny all overrides even individual allow rules.
+    pub fn with_deny_all(mut self, deny_all: bool) -> Self {
+        self.deny_all = deny_all;
+        self
     }
 
     pub fn rules(&self) -> &[Rule] {
         &self.rules
     }
 
-    /// Match `request` against the rules, most specific first.
+    /// Check app-wide denial, then match the rules most specific first.
     pub fn evaluate(&self, request: Scope) -> Outcome {
+        if self.deny_all {
+            return Outcome::Deny;
+        }
         if request.kind.is_some() {
             if let Some(rule) = self.find(request.method, request.kind) {
                 return rule.decision.into();
@@ -84,6 +105,7 @@ impl PolicySet {
 
         match self.find(request.method, None) {
             Some(rule) => rule.decision.into(),
+            None if self.allow_all => Outcome::Allow,
             None => Outcome::Prompt,
         }
     }

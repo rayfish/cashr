@@ -2,7 +2,7 @@
 
 use nostr::event::Kind;
 use nostr::types::Timestamp;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use super::{decision_from_sql, decision_to_sql, method_from_sql, Storage};
 use crate::client::ClientId;
@@ -13,6 +13,15 @@ impl Storage {
     /// Every rule stored for one client, ready to evaluate against.
     pub fn policy_set(&self, client: ClientId) -> Result<PolicySet> {
         let conn = self.conn();
+        let (allow_all, deny_all) = conn
+            .query_row(
+                "SELECT allow_all, deny_all FROM clients WHERE id = ?1
+             AND revoked_at IS NULL AND removed_at IS NULL",
+                params![client.get()],
+                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .optional()?
+            .unwrap_or((false, false));
         let mut stmt =
             conn.prepare("SELECT method, kind, decision FROM policies WHERE client_id = ?1")?;
 
@@ -33,7 +42,9 @@ impl Storage {
             ));
         }
 
-        Ok(PolicySet::new(rules))
+        Ok(PolicySet::new(rules)
+            .with_allow_all(allow_all)
+            .with_deny_all(deny_all))
     }
 
     /// Write a rule, replacing any existing rule with the same scope.

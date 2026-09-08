@@ -38,6 +38,10 @@ pub struct Client {
     /// When the user took this client off the list. Removing revokes too, so
     /// a removed client is always a revoked one.
     pub removed_at: Option<Timestamp>,
+    /// Automatically allow Nostr operations without a more specific rule.
+    pub allow_all: bool,
+    /// Refuse Nostr operations even when an individual rule allows them.
+    pub deny_all: bool,
 }
 
 impl Client {

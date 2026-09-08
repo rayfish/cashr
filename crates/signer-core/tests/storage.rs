@@ -14,6 +14,185 @@ fn relay(url: &str) -> RelayUrl {
     RelayUrl::parse(url).expect("test relay url parses")
 }
 
+#[test]
+fn deny_all_overrides_allow_rules_and_forget_all_clears_only_the_selected_app() {
+    let (storage, account) = storage_with_account();
+    let client = storage
+        .upsert_client(account.id, &Keys::generate().public_key(), Some("Nostrich"))
+        .unwrap();
+    let other = storage
+        .upsert_client(account.id, &Keys::generate().public_key(), Some("Other"))
+        .unwrap();
+    let scope = Scope::sign_event(Kind::TextNote);
+    storage.set_rule(client.id, scope, Decision::Allow).unwrap();
+    storage.set_rule(other.id, scope, Decision::Allow).unwrap();
+    storage
+        .set_client_allow_all(account.id, client.id, true)
+        .unwrap();
+    storage.deny_client_actions(account.id, client.id).unwrap();
+    let saved = storage
+        .client_by_public_key(account.id, &client.public_key)
+        .unwrap()
+        .unwrap();
+    assert!(saved.deny_all);
+    assert!(!saved.allow_all);
+    let policy = storage.policy_set(client.id).unwrap();
+    assert_eq!(policy.evaluate(scope), Outcome::Deny);
+    assert_eq!(
+        policy.evaluate(Scope::method(NostrConnectMethod::Nip44Decrypt)),
+        Outcome::Deny
+    );
+    let wrong_account = signer_core::account::AccountId::new(account.id.get() + 1);
+    assert!(storage
+        .deny_client_actions(wrong_account, client.id)
+        .is_err());
+    assert!(storage
+        .forget_client_rules(wrong_account, client.id)
+        .is_err());
+    assert_eq!(storage.policy_set(client.id).unwrap().rules().len(), 1);
+    storage
+        .set_client_allow_all(account.id, client.id, true)
+        .unwrap();
+    assert_eq!(
+        storage.policy_set(client.id).unwrap().evaluate(scope),
+        Outcome::Allow
+    );
+    storage.deny_client_actions(account.id, client.id).unwrap();
+    storage.forget_client_rules(account.id, client.id).unwrap();
+    let saved = storage
+        .client_by_public_key(account.id, &client.public_key)
+        .unwrap()
+        .unwrap();
+    assert!(!saved.allow_all && !saved.deny_all);
+    assert!(!saved.is_revoked());
+    let policy = storage.policy_set(client.id).unwrap();
+    assert!(policy.rules().is_empty());
+    assert_eq!(policy.evaluate(scope), Outcome::Prompt);
+    assert_eq!(
+        storage.policy_set(other.id).unwrap().evaluate(scope),
+        Outcome::Allow
+    );
+    storage
+        .set_client_allow_all(account.id, client.id, true)
+        .unwrap();
+    storage.forget_client_rules(account.id, client.id).unwrap();
+    assert_eq!(
+        storage.policy_set(client.id).unwrap().evaluate(scope),
+        Outcome::Prompt
+    );
+    storage.deny_client_actions(account.id, client.id).unwrap();
+    storage.revoke_client(client.id).unwrap();
+    assert!(
+        !storage
+            .client_by_public_key(account.id, &client.public_key)
+            .unwrap()
+            .unwrap()
+            .deny_all
+    );
+    assert!(storage.deny_client_actions(account.id, client.id).is_err());
+    assert!(storage.forget_client_rules(account.id, client.id).is_err());
+}
+
+#[test]
+fn app_wide_approval_is_scoped_reversible_and_cleared_on_revocation() {
+    let (storage, account) = storage_with_account();
+    let client = storage
+        .upsert_client(account.id, &Keys::generate().public_key(), Some("Nostrich"))
+        .unwrap();
+    let other = storage
+        .upsert_client(account.id, &Keys::generate().public_key(), Some("Other"))
+        .unwrap();
+    let second = storage
+        .insert_account(NewAccount {
+            identity_public_key: Keys::generate().public_key(),
+            signer_public_key: Keys::generate().public_key(),
+            label: "second".into(),
+            relays: vec![],
+            is_default: false,
+        })
+        .unwrap();
+    let same_app = storage
+        .upsert_client(second.id, &client.public_key, Some("Nostrich"))
+        .unwrap();
+    assert!(!client.allow_all);
+    assert!(storage
+        .set_client_allow_all(second.id, client.id, true)
+        .is_err());
+    assert!(storage
+        .set_client_allow_all(account.id, ClientId::new(999), true)
+        .is_err());
+    storage
+        .set_rule(client.id, Scope::sign_event(Kind::TextNote), Decision::Deny)
+        .unwrap();
+    storage
+        .set_client_allow_all(account.id, client.id, true)
+        .unwrap();
+    assert!(
+        storage
+            .client_by_public_key(account.id, &client.public_key)
+            .unwrap()
+            .unwrap()
+            .allow_all
+    );
+    let new_kind = Scope::sign_event(Kind::from_u16(27235));
+    let policy = storage.policy_set(client.id).unwrap();
+    assert_eq!(policy.evaluate(new_kind), Outcome::Allow);
+    assert_eq!(
+        policy.evaluate(Scope::method(NostrConnectMethod::Nip44Encrypt)),
+        Outcome::Allow
+    );
+    assert_eq!(
+        policy.evaluate(Scope::sign_event(Kind::TextNote)),
+        Outcome::Deny
+    );
+    for app in [other.id, same_app.id] {
+        assert_eq!(
+            storage.policy_set(app).unwrap().evaluate(new_kind),
+            Outcome::Prompt
+        );
+    }
+    storage
+        .set_client_allow_all(account.id, client.id, false)
+        .unwrap();
+    assert_eq!(
+        storage.policy_set(client.id).unwrap().evaluate(new_kind),
+        Outcome::Prompt
+    );
+    assert_eq!(
+        storage
+            .policy_set(client.id)
+            .unwrap()
+            .evaluate(Scope::sign_event(Kind::TextNote)),
+        Outcome::Deny
+    );
+    storage
+        .set_client_allow_all(account.id, client.id, true)
+        .unwrap();
+    storage.revoke_client(client.id).unwrap();
+    assert!(
+        !storage
+            .client_by_public_key(account.id, &client.public_key)
+            .unwrap()
+            .unwrap()
+            .allow_all
+    );
+    assert!(storage
+        .set_client_allow_all(account.id, client.id, true)
+        .is_err());
+    storage
+        .set_client_allow_all(account.id, other.id, true)
+        .unwrap();
+    storage.remove_client(other.id).unwrap();
+    let repaired = storage
+        .upsert_client(account.id, &other.public_key, Some("Other"))
+        .unwrap();
+    assert!(repaired.is_revoked());
+    assert!(!repaired.allow_all);
+    assert!(storage
+        .set_client_allow_all(account.id, other.id, true)
+        .is_err());
+}
+
 fn storage_with_account() -> (Storage, signer_core::account::Account) {
     let storage = Storage::in_memory().expect("in-memory database opens");
     let identity = Keys::generate();

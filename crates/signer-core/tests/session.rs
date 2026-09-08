@@ -492,6 +492,126 @@ async fn a_nostrconnect_secret_only_works_for_the_app_that_minted_it() {
 }
 
 #[tokio::test]
+async fn deny_all_refuses_saved_approvals_and_forget_all_restores_prompts() {
+    let harness = Harness::new(ScriptedApprover::new(ApprovalDecision::allow_once())).await;
+    harness.unlock().await;
+    harness.pair().await;
+    let client = harness.storage.clients(harness.account.id).unwrap()[0].clone();
+    harness
+        .storage
+        .set_rule(
+            client.id,
+            Scope::sign_event(Kind::TextNote),
+            Decision::Allow,
+        )
+        .unwrap();
+    harness
+        .storage
+        .deny_client_actions(harness.account.id, client.id)
+        .unwrap();
+    let request = NostrConnectRequest::SignEvent(note(harness.account.identity_public_key));
+    assert_eq!(
+        harness
+            .call("blocked-note", &request)
+            .await
+            .unwrap()
+            .error(),
+        Some("denied")
+    );
+    assert_eq!(
+        harness
+            .call("blocked-identity", &NostrConnectRequest::GetPublicKey)
+            .await
+            .unwrap()
+            .error(),
+        Some("denied")
+    );
+    assert_eq!(harness.approver.calls(), 0);
+    harness
+        .storage
+        .forget_client_rules(harness.account.id, client.id)
+        .unwrap();
+    assert!(harness
+        .call("prompt-again", &request)
+        .await
+        .unwrap()
+        .error()
+        .is_none());
+    assert_eq!(harness.approver.calls(), 1);
+}
+
+#[tokio::test]
+async fn allow_all_signs_new_kinds_without_prompts_and_respects_deny_lock_and_revoke() {
+    let harness = Harness::new(ScriptedApprover::new(ApprovalDecision::deny())).await;
+    harness.unlock().await;
+    harness.pair().await;
+    let client = harness.storage.clients(harness.account.id).unwrap()[0].clone();
+    harness
+        .storage
+        .set_client_allow_all(harness.account.id, client.id, true)
+        .unwrap();
+    for (index, kind) in [Kind::Metadata, Kind::TextNote, Kind::from_u16(27235)]
+        .into_iter()
+        .enumerate()
+    {
+        let mut event = note(harness.account.identity_public_key);
+        event.kind = kind;
+        assert!(harness
+            .call(
+                &format!("allow-{index}"),
+                &NostrConnectRequest::SignEvent(event)
+            )
+            .await
+            .unwrap()
+            .error()
+            .is_none());
+    }
+    assert!(harness
+        .call("identity", &NostrConnectRequest::GetPublicKey)
+        .await
+        .unwrap()
+        .error()
+        .is_none());
+    assert_eq!(harness.approver.calls(), 0);
+    let request = NostrConnectRequest::SignEvent(note(harness.account.identity_public_key));
+    harness
+        .storage
+        .set_rule(client.id, Scope::sign_event(Kind::TextNote), Decision::Deny)
+        .unwrap();
+    assert_eq!(
+        harness.call("deny", &request).await.unwrap().error(),
+        Some("denied")
+    );
+    assert_eq!(harness.approver.calls(), 0);
+    harness
+        .storage
+        .clear_rule(client.id, Scope::sign_event(Kind::TextNote))
+        .unwrap();
+    harness
+        .storage
+        .set_client_allow_all(harness.account.id, client.id, false)
+        .unwrap();
+    assert_eq!(
+        harness.call("ask-again", &request).await.unwrap().error(),
+        Some("denied")
+    );
+    assert_eq!(harness.approver.calls(), 1);
+    harness
+        .storage
+        .set_client_allow_all(harness.account.id, client.id, true)
+        .unwrap();
+    harness.session.lock();
+    assert!(harness.call("locked", &request).await.is_none());
+    harness.unlock().await;
+    harness.storage.revoke_client(client.id).unwrap();
+    assert_eq!(
+        harness.call("revoked", &request).await.unwrap().error(),
+        Some("unauthorized")
+    );
+    assert_eq!(harness.approver.calls(), 1);
+}
+
+#[tokio::test]
 async fn allow_always_stores_a_rule_and_stops_the_prompting() {
     let harness = Harness::new(ScriptedApprover::new(ApprovalDecision::allow_always())).await;
     harness.unlock().await;
