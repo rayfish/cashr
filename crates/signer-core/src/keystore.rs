@@ -17,6 +17,9 @@ pub enum KeyStoreError {
     #[error("the user cancelled authentication")]
     Cancelled,
 
+    #[error("Authentication was interrupted. Try again.")]
+    AuthInterrupted,
+
     #[error("authentication failed")]
     AuthFailed,
 

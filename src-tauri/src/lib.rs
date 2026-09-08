@@ -1,9 +1,10 @@
-//! Byrgi: a menu bar NIP-46 signer.
+//! Cashr: a menu bar NIP-46 signer.
 
 #![forbid(unsafe_code)]
 
 mod commands;
 mod paths;
+mod qr;
 mod scan;
 mod state;
 mod tray;
@@ -135,7 +136,14 @@ pub fn run() -> Result<()> {
             wallet::wallet_open,
             wallet::wallet_list,
             wallet::wallet_select,
-            wallet::wallet_import,
+            wallet::wallet_set_mint,
+            wallet::wallet_backup,
+            wallet::wallet_inspect_token,
+            wallet::wallet_review_send,
+            wallet::wallet_send_token,
+            wallet::wallet_show_token,
+            wallet::wallet_reclaim_token,
+            qr::encode_qr,
             wallet::wallet_fund,
             wallet::wallet_receive,
             wallet::wallet_review,
@@ -143,16 +151,16 @@ pub fn run() -> Result<()> {
             wallet::wallet_cancel,
             wallet::wallet_restore,
             wallet::wallet_zap,
-            commands::unlock,
             commands::lock,
             commands::forget_keychain,
             commands::unlock_with_touch_id,
-            commands::forget_touch_id,
             commands::create_account,
             commands::import_account,
             commands::delete_account,
+            commands::rename_account,
             commands::set_default_account,
             commands::set_lightning_address,
+            commands::find_lightning_address,
             commands::set_relays,
             commands::relay_health,
             commands::pair_bunker,

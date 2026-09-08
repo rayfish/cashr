@@ -1,14 +1,15 @@
 //! Cashu wallet operations stay in Rust. The webview sees invoices and balances,
-//! never seeds or spendable proofs. Each operation opens an encrypted database.
+//! never raw seeds or spendable proofs. Recovery words are revealed only by an
+//! explicit backup request on an unlocked account. Databases are encrypted.
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use cdk::nuts::{CurrencyUnit, PaymentMethod, Token};
-use cdk::wallet::{ReceiveOptions, Wallet};
+use cdk::wallet::{ReceiveOptions, SendOptions, Wallet};
 use cdk_sqlite::WalletSqliteDatabase;
 use lightning_invoice::{Bolt11Invoice, Currency};
 use serde::{Deserialize, Serialize};
@@ -19,12 +20,179 @@ use zeroize::Zeroizing;
 
 use crate::state::AppState;
 
-pub const MINT: &str = "https://btc.aleafnd.org/cashu";
+pub const MINT: &str = "https://mint.minibits.cash/Bitcoin";
+
+#[derive(Debug)]
+enum WalletFailure {
+    Missing,
+    Storage,
+    Sync,
+    Recovery,
+    RecoveryIdentity,
+}
+
+impl std::fmt::Display for WalletFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Missing => "Create or restore a wallet in Settings.",
+            Self::Storage => "Could not read the saved wallet.",
+            Self::Sync => "Mint sync failed. Retrying…",
+            Self::Recovery => "Fund recovery interrupted. Retrying…",
+            Self::RecoveryIdentity => "Recovery words do not match this wallet.",
+        })
+    }
+}
+
+impl std::error::Error for WalletFailure {}
+
+#[cfg(test)]
+mod recovery_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use cdk::cdk_database::WalletDatabase;
+
+    #[test]
+    fn wallet_errors_are_concise_and_do_not_expose_sdk_details() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("wallet.sqlite");
+        let missing = error(original_material(&path, &[7; 64]).unwrap_err());
+        assert_eq!(missing, "Create or restore a wallet in Settings.");
+        assert!(!path.exists());
+        assert!(
+            !error(anyhow!("SDK error with secret-token-fixture")).contains("secret-token-fixture")
+        );
+    }
+
+    const WORDS: &str =
+        "leader monkey parrot ring guide accident before fence cannon height naive bean";
+
+    #[test]
+    fn one_phrase_recovers_cashu_and_the_nip06_identity() {
+        let identity = identity_from_phrase(WORDS, "").unwrap();
+        assert_eq!(
+            identity.public_key().to_hex(),
+            "17162c921dc4d2518f9a101db33695df1afb56ab82f5ff3e5da6eec3ca5cd917"
+        );
+        assert_eq!(
+            identity.secret_key().to_secret_hex(),
+            "7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a"
+        );
+        let generated = new_mnemonic().unwrap();
+        assert_eq!(generated.split_whitespace().count(), 12);
+        let original = identity_from_phrase(&generated, "").unwrap();
+        let restored = identity_from_phrase(&generated, "").unwrap();
+        assert_eq!(original.public_key(), restored.public_key());
+        assert_ne!(
+            *import_seed(&generated, "").unwrap(),
+            signer_core::vault::wallet_storage_seed(&original)
+        );
+    }
+
+    #[test]
+    fn recovery_passphrase_changes_both_keys_and_normalizes_unicode() {
+        let plain = identity_from_phrase(WORDS, "").unwrap();
+        let composed = identity_from_phrase(WORDS, "caf\u{e9}").unwrap();
+        let decomposed = identity_from_phrase(WORDS, "cafe\u{301}").unwrap();
+        assert_ne!(plain.public_key(), composed.public_key());
+        assert_eq!(composed.public_key(), decomposed.public_key());
+        assert_ne!(
+            *import_seed(WORDS, "").unwrap(),
+            *import_seed(WORDS, "caf\u{e9}").unwrap()
+        );
+        assert_eq!(
+            *import_seed(WORDS, "caf\u{e9}").unwrap(),
+            *import_seed(WORDS, "cafe\u{301}").unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn restoring_and_switching_mints_preserve_seed_backup_and_wallet_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("wallet.sqlite");
+        let seed = import_seed(WORDS, "").unwrap();
+        let identity = identity_from_phrase(WORDS, "").unwrap();
+        let storage = signer_core::vault::wallet_storage_seed(&identity);
+        initialize_wallet(&path, &storage, &seed, WORDS, false, MINT)
+            .await
+            .unwrap();
+        let wallet = open_path(path.clone(), &storage, false).await.unwrap();
+        wallet
+            .localstore
+            .add_mint("https://saved.example".parse().unwrap(), None)
+            .await
+            .unwrap();
+        let keyset = "00916bbf7ef91a36".parse().unwrap();
+        assert_eq!(
+            wallet
+                .localstore
+                .increment_keyset_counter(&keyset, 17)
+                .await
+                .unwrap(),
+            17
+        );
+        drop(wallet);
+        initialize_wallet(
+            &path,
+            &storage,
+            &seed,
+            WORDS,
+            false,
+            "https://another.example",
+        )
+        .await
+        .unwrap();
+        let wallet = open_path(path.clone(), &storage, false).await.unwrap();
+        assert_eq!(
+            wallet
+                .localstore
+                .increment_keyset_counter(&keyset, 0)
+                .await
+                .unwrap(),
+            17
+        );
+        assert_eq!(wallet.mint_url.to_string(), MINT);
+        assert!(wallet
+            .localstore
+            .get_mints()
+            .await
+            .unwrap()
+            .contains_key(&"https://saved.example".parse().unwrap()));
+        drop(wallet);
+        let slot = mint_slot(&path, &storage, "https://another.example")
+            .await
+            .unwrap();
+        select_slot(&path, &slot).unwrap();
+        let other_path = slot_path(&path, &slot).unwrap();
+        assert_eq!(
+            *wallet_profile(&other_path, database_password(&storage).as_str())
+                .unwrap()
+                .0,
+            *seed
+        );
+        let (backup, required) = read_recovery(&other_path, &storage).unwrap();
+        assert_eq!(backup.as_str(), WORDS);
+        assert!(!required);
+        assert_eq!(
+            identity_from_phrase(&backup, "").unwrap().public_key(),
+            identity.public_key()
+        );
+        assert_eq!(*import_seed(&backup, "").unwrap(), *seed);
+        assert_eq!(mint_slot(&path, &storage, MINT).await.unwrap(), "original");
+        assert_eq!(wallet_choices(&path, &storage).unwrap().len(), 2);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!bytes
+            .windows(WORDS.len())
+            .any(|window| window == WORDS.as_bytes()));
+        assert!(read_recovery(&path, &[9; 64]).is_err());
+        assert!(
+            initialize_wallet(&path, &storage, &[9; 64], WORDS, false, MINT)
+                .await
+                .is_err()
+        );
+        assert_eq!(*original_material(&path, &storage).unwrap().0, *seed);
+    }
 
     #[test]
     fn imported_seed_matches_bip39_and_rejects_invalid_input() {
@@ -48,78 +216,6 @@ mod tests {
             assert!(import_mint(value).is_err());
         }
         assert!(slot_path(std::path::Path::new("wallet.sqlite"), "../another").is_err());
-    }
-
-    #[tokio::test]
-    async fn imports_are_encrypted_separate_and_reimport_preserves_state() {
-        let directory = tempfile::tempdir().unwrap();
-        let original = directory.path().join("identity.sqlite");
-        let identity_seed = [9; 64];
-        let imported_seed = [7; 64];
-        let original_wallet = open_path(original.clone(), &identity_seed, false)
-            .await
-            .unwrap();
-        original_wallet
-            .localstore
-            .add_mint(MINT.parse().unwrap(), None)
-            .await
-            .unwrap();
-        drop(original_wallet);
-        let slot = store_import(
-            &original,
-            &identity_seed,
-            &imported_seed,
-            "https://mint.example",
-        )
-        .await
-        .unwrap();
-        assert_eq!(selected_slot(&original).unwrap(), "original");
-        let imported = open_path(slot_path(&original, &slot).unwrap(), &identity_seed, true)
-            .await
-            .unwrap();
-        assert_eq!(imported.mint_url.to_string(), "https://mint.example");
-        imported
-            .localstore
-            .add_mint("https://preserve.example".parse().unwrap(), None)
-            .await
-            .unwrap();
-        drop(imported);
-        assert_eq!(
-            slot,
-            store_import(
-                &original,
-                &identity_seed,
-                &imported_seed,
-                "https://mint.example"
-            )
-            .await
-            .unwrap()
-        );
-        let imported = open_path(slot_path(&original, &slot).unwrap(), &identity_seed, true)
-            .await
-            .unwrap();
-        assert!(imported
-            .localstore
-            .get_mints()
-            .await
-            .unwrap()
-            .contains_key(&"https://preserve.example".parse().unwrap()));
-        let original_wallet = open_path(original.clone(), &identity_seed, false)
-            .await
-            .unwrap();
-        assert!(original_wallet
-            .localstore
-            .get_mints()
-            .await
-            .unwrap()
-            .contains_key(&MINT.parse().unwrap()));
-        let bytes = std::fs::read(slot_path(&original, &slot).unwrap()).unwrap();
-        assert!(!bytes.starts_with(b"SQLite format 3"));
-        assert!(!bytes.windows(64).any(|bytes| bytes == imported_seed));
-        select_slot(&original, &slot).unwrap();
-        assert_eq!(selected_slot(&original).unwrap(), slot);
-        select_slot(&original, "original").unwrap();
-        assert_eq!(selected_slot(&original).unwrap(), "original");
     }
 
     #[test]
@@ -208,6 +304,7 @@ pub struct WalletService {
     // no two commands can reserve or spend the same proofs concurrently.
     pub(crate) gate: tokio::sync::Mutex<()>,
     approvals: Mutex<HashMap<String, Approval>>,
+    cashu_approvals: Mutex<HashMap<String, CashuApproval>>,
     epoch: AtomicU64,
 }
 
@@ -226,6 +323,10 @@ impl WalletService {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        self.cashu_approvals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 }
 
@@ -236,6 +337,7 @@ pub struct WalletView {
     pending: u64,
     transactions: Vec<TransactionView>,
     funding_invoice: Option<String>,
+    pending_tokens: Vec<PendingTokenView>,
 }
 
 #[derive(Serialize)]
@@ -275,6 +377,10 @@ fn original_wallet_path(app: &AppHandle, state: &AppState, account: i64) -> Resu
         .storage
         .account(AccountId::new(account))?
         .identity_public_key;
+    wallet_path_for_identity(app, identity)
+}
+
+fn wallet_path_for_identity(app: &AppHandle, identity: nostr::key::PublicKey) -> Result<PathBuf> {
     let dir = app.path().app_data_dir()?.join("wallets");
     std::fs::create_dir_all(&dir)?;
     #[cfg(unix)]
@@ -285,23 +391,74 @@ fn original_wallet_path(app: &AppHandle, state: &AppState, account: i64) -> Resu
     Ok(dir.join(format!("{}.sqlite", identity.to_hex())))
 }
 
-pub fn has_wallet(app: &AppHandle, state: &AppState, account: i64) -> Result<bool> {
-    let path = original_wallet_path(app, state, account)?;
-    let prefix = format!("{}.", path.file_stem().unwrap().to_string_lossy());
-    for entry in std::fs::read_dir(path.parent().unwrap())? {
-        if entry?.file_name().to_string_lossy().starts_with(&prefix) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+async fn open(app: &AppHandle, state: &AppState, account: i64) -> Result<Wallet> {
+    open_selected(app, state, account, false).await
 }
 
-async fn open(app: &AppHandle, state: &AppState, account: i64) -> Result<Wallet> {
-    let seed = Zeroizing::new(state.session.vault().cashu_seed(AccountId::new(account))?);
+async fn open_selected(
+    app: &AppHandle,
+    state: &AppState,
+    account: i64,
+    recover: bool,
+) -> Result<Wallet> {
+    let seed = Zeroizing::new(
+        state
+            .session
+            .vault()
+            .wallet_storage_seed(AccountId::new(account))?,
+    );
     let original = original_wallet_path(app, state, account)?;
     let slot = selected_slot(&original)?;
     let path = slot_path(&original, &slot)?;
-    open_path(path, &seed, slot != "original").await
+    let wallet = open_path(path.clone(), &seed, slot != "original").await?;
+    if recover {
+        recover_on_open(&wallet, &path, &seed).await?;
+    }
+    Ok(wallet)
+}
+
+fn recovery_scan(
+    path: &std::path::Path,
+    seed: &[u8; 64],
+    complete: Option<bool>,
+) -> Result<Option<bool>> {
+    use rusqlite::OptionalExtension;
+    let conn = rusqlite::Connection::open(path)?;
+    conn.pragma_update(None, "key", database_password(seed).as_str())?;
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS cashr_recovery_scan (id INTEGER PRIMARY KEY CHECK(id = 1), complete INTEGER NOT NULL);")?;
+    if let Some(complete) = complete {
+        conn.execute(
+            "INSERT OR REPLACE INTO cashr_recovery_scan VALUES (1, ?1)",
+            [complete],
+        )?;
+    }
+    Ok(conn
+        .query_row(
+            "SELECT complete FROM cashr_recovery_scan WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+async fn recover_on_open(wallet: &Wallet, path: &std::path::Path, seed: &[u8; 64]) -> Result<()> {
+    let complete = recovery_scan(path, seed, None).context(WalletFailure::Storage)?;
+    if complete == Some(true) {
+        return Ok(());
+    }
+    // Wallets that already hold proofs have loaded their funds. An empty wallet
+    // with no scan record still needs discovery, including earlier imports.
+    let has_funds = wallet.total_balance().await? > 0.into()
+        || wallet.total_pending_balance().await? > 0.into()
+        || wallet.total_reserved_balance().await? > 0.into();
+    if complete == Some(false) || !has_funds {
+        // Persist before the network request so partial scans resume after a
+        // restart instead of mistaking partially recovered proofs for completion.
+        recovery_scan(path, seed, Some(false)).context(WalletFailure::Storage)?;
+        wallet.restore().await.context(WalletFailure::Recovery)?;
+    }
+    recovery_scan(path, seed, Some(true)).context(WalletFailure::Storage)?;
+    Ok(())
 }
 
 fn database_password(seed: &[u8; 64]) -> Zeroizing<String> {
@@ -311,28 +468,98 @@ fn database_password(seed: &[u8; 64]) -> Zeroizing<String> {
     Zeroizing::new(format!("{:x}", hash.finalize()))
 }
 
-async fn open_path(path: PathBuf, identity_seed: &[u8; 64], imported: bool) -> Result<Wallet> {
-    let password = database_password(identity_seed);
-    let (seed, mint) = if imported {
-        let conn = rusqlite::Connection::open_with_flags(
-            &path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?;
-        conn.pragma_update(None, "key", password.as_str())?;
-        let (bytes, mint): (Vec<u8>, String) = conn.query_row(
+fn new_mnemonic() -> Result<Zeroizing<String>> {
+    let entropy = nostr::key::Keys::generate();
+    let phrase = Zeroizing::new(bip39::Mnemonic::from_entropy(
+        &entropy.secret_key().as_secret_bytes()[..16],
+    )?);
+    Ok(Zeroizing::new(phrase.to_string()))
+}
+
+fn write_recovery(
+    conn: &rusqlite::Connection,
+    phrase: &str,
+    passphrase_required: bool,
+) -> Result<()> {
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS byrgi_master_recovery (id INTEGER PRIMARY KEY CHECK(id = 1), phrase TEXT NOT NULL, passphrase_required INTEGER NOT NULL);")?;
+    conn.execute(
+        "INSERT OR REPLACE INTO byrgi_master_recovery VALUES (1, ?1, ?2)",
+        rusqlite::params![phrase, passphrase_required],
+    )?;
+    Ok(())
+}
+
+fn read_recovery(
+    path: &std::path::Path,
+    identity_seed: &[u8; 64],
+) -> Result<(Zeroizing<String>, bool)> {
+    let conn =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    conn.pragma_update(None, "key", database_password(identity_seed).as_str())?;
+    Ok(conn.query_row(
+        "SELECT phrase, passphrase_required FROM byrgi_master_recovery WHERE id = 1",
+        [],
+        |row| Ok((Zeroizing::new(row.get::<_, String>(0)?), row.get(1)?)),
+    )?)
+}
+
+fn save_recovery(
+    path: &std::path::Path,
+    identity_seed: &[u8; 64],
+    phrase: &str,
+    passphrase_required: bool,
+) -> Result<()> {
+    let mut conn = rusqlite::Connection::open(path)?;
+    conn.pragma_update(None, "key", database_password(identity_seed).as_str())?;
+    let transaction = conn.transaction()?;
+    write_recovery(&transaction, phrase, passphrase_required)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn original_material(
+    path: &std::path::Path,
+    storage_seed: &[u8; 64],
+) -> Result<(Zeroizing<[u8; 64]>, String)> {
+    if !path.try_exists().context(WalletFailure::Storage)? {
+        return Err(WalletFailure::Missing.into());
+    }
+    read_recovery(path, storage_seed).context(WalletFailure::Storage)?;
+    wallet_profile(path, database_password(storage_seed).as_str())
+}
+
+fn wallet_profile(path: &std::path::Path, password: &str) -> Result<(Zeroizing<[u8; 64]>, String)> {
+    let conn =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .context(WalletFailure::Storage)?;
+    conn.pragma_update(None, "key", password)
+        .context(WalletFailure::Storage)?;
+    let (bytes, mint): (Vec<u8>, String) = conn
+        .query_row(
             "SELECT seed, mint FROM byrgi_wallet_profile WHERE id = 1",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        let bytes = Zeroizing::new(bytes);
-        ensure!(bytes.len() == 64, "invalid stored wallet seed");
-        let mut seed = Zeroizing::new([0; 64]);
-        seed.copy_from_slice(&bytes);
-        (seed, mint)
+        )
+        .context(WalletFailure::Storage)?;
+    let bytes = Zeroizing::new(bytes);
+    if bytes.len() != 64 {
+        return Err(WalletFailure::Storage.into());
+    }
+    let mut seed = Zeroizing::new([0; 64]);
+    seed.copy_from_slice(&bytes);
+    Ok((seed, mint))
+}
+
+async fn open_path(path: PathBuf, identity_seed: &[u8; 64], imported: bool) -> Result<Wallet> {
+    let password = database_password(identity_seed);
+    let (seed, mint) = if imported {
+        wallet_profile(&path, password.as_str())?
     } else {
-        (Zeroizing::new(*identity_seed), MINT.to_owned())
+        original_material(&path, identity_seed)?
     };
-    let db = WalletSqliteDatabase::new((path, password.to_string())).await?;
+    let db = WalletSqliteDatabase::new((path, password.to_string()))
+        .await
+        .context(WalletFailure::Storage)?;
     Ok(Wallet::new(
         &mint,
         CurrencyUnit::Sat,
@@ -346,6 +573,7 @@ async fn view(wallet: &Wallet) -> Result<WalletView> {
     let mut transactions = wallet.list_transactions(None).await?;
     transactions.sort_by_key(|tx| std::cmp::Reverse(tx.timestamp));
     Ok(WalletView {
+        pending_tokens: pending_tokens(wallet).await?,
         funding_invoice: wallet
             .localstore
             .get_unissued_mint_quotes()
@@ -375,6 +603,11 @@ async fn view(wallet: &Wallet) -> Result<WalletView> {
 #[tauri::command]
 pub fn wallet_cancel(service: State<'_, WalletService>, account: i64) {
     service
+        .cashu_approvals
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, approval| approval.account != account);
+    service
         .approvals
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -384,7 +617,15 @@ pub fn wallet_cancel(service: State<'_, WalletService>, account: i64) {
 fn error(error: anyhow::Error) -> String {
     // Avoid forwarding arbitrary SDK errors containing invoices or tokens.
     // Commands supply context suitable for the user instead.
-    let _ = error;
+    if let Some(failure) = error.downcast_ref::<WalletFailure>() {
+        return failure.to_string();
+    }
+    if matches!(
+        error.downcast_ref::<signer_core::error::SignerError>(),
+        Some(signer_core::error::SignerError::Locked)
+    ) {
+        return "Unlock this account to use its wallet.".into();
+    }
     "Wallet operation failed. Check your connection and available balance, then Refresh before retrying.".into()
 }
 
@@ -397,13 +638,24 @@ pub async fn wallet_open(
 ) -> Result<WalletView, String> {
     let _guard = service.gate.lock().await;
     async {
-        let wallet = open(&app, &state, account).await?;
+        let wallet = open_selected(&app, &state, account, true).await?;
         // Recovery only resumes previously authorized operations.
-        let report = wallet.recover_incomplete_sagas().await?;
-        ensure!(report.failed == 0, "wallet recovery incomplete");
-        wallet.finalize_pending_melts().await?;
-        wallet.mint_unissued_quotes().await?;
-        view(&wallet).await
+        let report = wallet
+            .recover_incomplete_sagas()
+            .await
+            .context(WalletFailure::Sync)?;
+        if report.failed != 0 {
+            return Err(WalletFailure::Sync.into());
+        }
+        wallet
+            .finalize_pending_melts()
+            .await
+            .context(WalletFailure::Sync)?;
+        wallet
+            .mint_unissued_quotes()
+            .await
+            .context(WalletFailure::Sync)?;
+        view(&wallet).await.context(WalletFailure::Storage)
     }
     .await
     .map_err(error)
@@ -446,8 +698,9 @@ pub async fn wallet_receive(
     if token.len() > 100_000 {
         return Err("This Cashu token is too large.".into());
     }
+    let token = Zeroizing::new(token);
     let token = token.trim().strip_prefix("cashu:").unwrap_or(token.trim());
-    let parsed = Token::from_str(token).map_err(|_| "Invalid Cashu token.")?;
+    let parsed = parse_token(token).map_err(|_| "Use a valid Cashu token denominated in sats.")?;
     let _guard = service.gate.lock().await;
     async {
         let wallet = open(&app, &state, account).await?;
@@ -614,8 +867,16 @@ pub async fn wallet_restore(
 ) -> Result<WalletView, String> {
     let _guard = service.gate.lock().await;
     async {
-        let wallet = open(&app, &state, account).await?;
-        wallet.restore().await?;
+        let seed = Zeroizing::new(
+            state
+                .session
+                .vault()
+                .wallet_storage_seed(AccountId::new(account))?,
+        );
+        let original = original_wallet_path(&app, &state, account)?;
+        let path = slot_path(&original, &selected_slot(&original)?)?;
+        recovery_scan(&path, &seed, Some(false)).context(WalletFailure::Storage)?;
+        let wallet = open_selected(&app, &state, account, true).await?;
         view(&wallet).await
     }
     .await
@@ -865,6 +1126,35 @@ struct WalletChoice {
     label: String,
 }
 
+fn wallet_choices(original: &std::path::Path, seed: &[u8; 64]) -> Result<Vec<WalletChoice>> {
+    let password = database_password(seed);
+    let (account_seed, account_mint) = original_material(original, seed)?;
+    let prefix = format!("{}.", original.file_stem().unwrap().to_string_lossy());
+    let mut wallets = vec![WalletChoice {
+        id: "original".into(),
+        label: account_mint,
+    }];
+    for entry in std::fs::read_dir(original.parent().unwrap())? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(slot) = name
+            .strip_prefix(&prefix)
+            .and_then(|name| name.strip_suffix(".sqlite"))
+        {
+            if slot.len() == 64 && slot.bytes().all(|c| c.is_ascii_hexdigit()) {
+                let (wallet_seed, mint) = wallet_profile(&entry.path(), password.as_str())?;
+                ensure!(*wallet_seed == *account_seed, "wallet seed mismatch");
+                wallets.push(WalletChoice {
+                    id: slot.into(),
+                    label: mint,
+                });
+            }
+        }
+    }
+    wallets[1..].sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(wallets)
+}
+
 #[tauri::command]
 pub async fn wallet_list(
     app: AppHandle,
@@ -874,31 +1164,14 @@ pub async fn wallet_list(
 ) -> Result<WalletList, String> {
     let _guard = service.gate.lock().await;
     (|| -> Result<WalletList> {
-        state
-            .session
-            .vault()
-            .identity_public_key(AccountId::new(account))?;
+        let seed = Zeroizing::new(
+            state
+                .session
+                .vault()
+                .wallet_storage_seed(AccountId::new(account))?,
+        );
         let original = original_wallet_path(&app, &state, account)?;
-        let prefix = format!("{}.", original.file_stem().unwrap().to_string_lossy());
-        let mut wallets = vec![WalletChoice {
-            id: "original".into(),
-            label: "Original wallet".into(),
-        }];
-        for entry in std::fs::read_dir(original.parent().unwrap())? {
-            let name = entry?.file_name().to_string_lossy().into_owned();
-            if let Some(slot) = name
-                .strip_prefix(&prefix)
-                .and_then(|name| name.strip_suffix(".sqlite"))
-            {
-                if slot.len() == 64 && slot.bytes().all(|c| c.is_ascii_hexdigit()) {
-                    wallets.push(WalletChoice {
-                        id: slot.into(),
-                        label: format!("Imported · {}", &slot[..8]),
-                    });
-                }
-            }
-        }
-        wallets[1..].sort_by(|a, b| a.id.cmp(&b.id));
+        let wallets = wallet_choices(&original, &seed)?;
         Ok(WalletList {
             active: selected_slot(&original)?,
             wallets,
@@ -918,21 +1191,96 @@ pub async fn wallet_select(
     let _guard = service.gate.lock().await;
     service.lock();
     async {
-        let seed = Zeroizing::new(state.session.vault().cashu_seed(AccountId::new(account))?);
+        let seed = Zeroizing::new(
+            state
+                .session
+                .vault()
+                .wallet_storage_seed(AccountId::new(account))?,
+        );
         let original = original_wallet_path(&app, &state, account)?;
-        let wallet = open_path(slot_path(&original, &slot)?, &seed, slot != "original").await?;
+        let (root_seed, _) = original_material(&original, &seed)?;
+        let (selected_seed, _) = wallet_profile(
+            &slot_path(&original, &slot)?,
+            database_password(&seed).as_str(),
+        )?;
+        ensure!(*root_seed == *selected_seed, "wallet seed mismatch");
+        let path = slot_path(&original, &slot)?;
+        let wallet = open_path(path.clone(), &seed, slot != "original").await?;
         select_slot(&original, &slot)?;
+        recover_on_open(&wallet, &path, &seed).await?;
         view(&wallet).await
     }
     .await
     .map_err(error)
 }
 
-#[derive(Deserialize)]
-pub struct WalletImport {
-    mnemonic: String,
-    passphrase: String,
+async fn mint_slot(
+    original: &std::path::Path,
+    identity_seed: &[u8; 64],
+    mint: &str,
+) -> Result<String> {
+    let password = database_password(identity_seed);
+    let active = selected_slot(original)?;
+    let (account_seed, account_mint) = original_material(original, identity_seed)?;
+    let source_path = slot_path(original, &active)?;
+    let seed = if active == "original" {
+        Zeroizing::new(*account_seed)
+    } else {
+        wallet_profile(&slot_path(original, &active)?, password.as_str())?.0
+    };
+    ensure!(*seed == *account_seed, "wallet seed mismatch");
+    if account_mint == mint {
+        return Ok("original".into());
+    }
+    let slot = store_mint(original, identity_seed, &seed, mint).await?;
+    let (phrase, required) = read_recovery(&source_path, identity_seed)?;
+    save_recovery(
+        &slot_path(original, &slot)?,
+        identity_seed,
+        &phrase,
+        required,
+    )?;
+    Ok(slot)
+}
+
+#[tauri::command]
+pub async fn wallet_set_mint(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    service: State<'_, WalletService>,
+    account: i64,
     mint: String,
+) -> Result<WalletView, String> {
+    let mint = import_mint(&mint)
+        .map_err(|_| "Enter the mint’s HTTPS URL without credentials or query parameters.")?;
+    let _guard = service.gate.lock().await;
+    service.lock();
+    let epoch = service.epoch.load(Ordering::SeqCst);
+    async {
+        let seed = Zeroizing::new(
+            state
+                .session
+                .vault()
+                .wallet_storage_seed(AccountId::new(account))?,
+        );
+        let original = original_wallet_path(&app, &state, account)?;
+        let slot = mint_slot(&original, &seed, &mint).await?;
+        let path = slot_path(&original, &slot)?;
+        let wallet = open_path(path.clone(), &seed, slot != "original").await?;
+        ensure!(
+            epoch == service.epoch.load(Ordering::SeqCst),
+            "wallet locked while selecting mint"
+        );
+        ensure!(
+            state.session.vault().holds(AccountId::new(account)),
+            "account locked while selecting mint"
+        );
+        select_slot(&original, &slot)?;
+        recover_on_open(&wallet, &path, &seed).await?;
+        view(&wallet).await
+    }
+    .await
+    .map_err(error)
 }
 
 fn import_seed(words: &str, passphrase: &str) -> Result<Zeroizing<[u8; 64]>> {
@@ -942,6 +1290,175 @@ fn import_seed(words: &str, passphrase: &str) -> Result<Zeroizing<[u8; 64]>> {
     );
     let phrase = Zeroizing::new(bip39::Mnemonic::parse(words)?);
     Ok(Zeroizing::new(phrase.to_seed(passphrase)))
+}
+
+#[derive(Deserialize)]
+pub struct WalletRecoveryInput {
+    pub account: Option<i64>,
+    pub mnemonic: String,
+    pub passphrase: String,
+    pub mint: String,
+}
+
+impl Drop for WalletRecoveryInput {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.mnemonic.zeroize();
+        self.passphrase.zeroize();
+    }
+}
+
+fn identity_from_phrase(words: &str, passphrase: &str) -> Result<nostr::key::Keys> {
+    use nostr::nips::nip06::FromMnemonic;
+    let phrase = Zeroizing::new(bip39::Mnemonic::parse(words)?);
+    let words = Zeroizing::new(phrase.to_string());
+    let mut normalized = std::borrow::Cow::Borrowed(passphrase);
+    bip39::Mnemonic::normalize_utf8_cow(&mut normalized);
+    let normalized = Zeroizing::new(normalized.into_owned());
+    Ok(nostr::key::Keys::from_mnemonic(
+        words.as_str(),
+        Some(normalized.as_str()),
+    )?)
+}
+
+async fn initialize_wallet(
+    path: &std::path::Path,
+    storage_seed: &[u8; 64],
+    seed: &[u8; 64],
+    words: &str,
+    passphrase_required: bool,
+    mint: &str,
+) -> Result<()> {
+    // A repeated restore keeps the original mint, proofs and derivation counters.
+    let original_mint = if path.exists() {
+        let (stored, mint) = original_material(path, storage_seed)?;
+        ensure!(*stored == *seed, "wallet seed mismatch");
+        mint
+    } else {
+        mint.to_owned()
+    };
+    store_wallet_file(path, storage_seed, seed, &original_mint).await?;
+    save_recovery(path, storage_seed, words, passphrase_required)
+}
+
+pub async fn create_account(
+    app: &AppHandle,
+    state: &AppState,
+    service: &WalletService,
+    label: String,
+    recovery: Option<WalletRecoveryInput>,
+) -> Result<signer_core::account::Account> {
+    let restoring = recovery.is_some();
+    let recovery = match recovery {
+        Some(recovery) => recovery,
+        None => WalletRecoveryInput {
+            account: None,
+            mnemonic: new_mnemonic()?.to_string(),
+            passphrase: String::new(),
+            mint: MINT.into(),
+        },
+    };
+    let seed = import_seed(&recovery.mnemonic, &recovery.passphrase)?;
+    let mint = import_mint(&recovery.mint)?;
+    let phrase = Zeroizing::new(bip39::Mnemonic::parse(&recovery.mnemonic)?);
+    let words = Zeroizing::new(phrase.to_string());
+    let identity = identity_from_phrase(&words, &recovery.passphrase)?;
+    if let Some(account) = recovery.account {
+        if state
+            .storage
+            .account(AccountId::new(account))?
+            .identity_public_key
+            != identity.public_key()
+        {
+            return Err(WalletFailure::RecoveryIdentity.into());
+        }
+    }
+    let storage_seed = Zeroizing::new(signer_core::vault::wallet_storage_seed(&identity));
+    let _guard = service.gate.lock().await;
+    service.lock();
+    let epoch = service.epoch.load(Ordering::SeqCst);
+    if !state.has_passphrase() {
+        state.prepare_touch_id().await?;
+    }
+    if epoch != service.epoch.load(Ordering::SeqCst) {
+        state.lock();
+        bail!("Unlock cancelled.");
+    }
+    let path = wallet_path_for_identity(app, identity.public_key())?;
+    initialize_wallet(
+        &path,
+        &storage_seed,
+        &seed,
+        &words,
+        !recovery.passphrase.is_empty(),
+        &mint,
+    )
+    .await?;
+    let slot = prepare_account_mint(&path, &storage_seed, &mint, restoring).await?;
+    ensure!(
+        epoch == service.epoch.load(Ordering::SeqCst) && state.has_passphrase(),
+        "locked while restoring wallet"
+    );
+    let existing = state
+        .accounts()?
+        .into_iter()
+        .find(|account| account.identity_public_key == identity.public_key());
+    let account = match existing {
+        Some(account) => {
+            state.restore_account_keys(&account, &identity).await?;
+            state.storage.account(account.id)?
+        }
+        None => state.add_account(label, identity).await?,
+    };
+    state.session.unlock(&[account.id]).await?;
+    if epoch != service.epoch.load(Ordering::SeqCst) || !state.has_passphrase() {
+        state.lock();
+        bail!("locked while restoring wallet");
+    }
+    select_slot(&path, &slot)?;
+    if let Err(error) = state.runner.ensure(account.clone()).await {
+        tracing::warn!("could not resume account relays: {error}");
+    }
+    Ok(account)
+}
+
+async fn prepare_account_mint(
+    original: &std::path::Path,
+    storage_seed: &[u8; 64],
+    mint: &str,
+    restoring: bool,
+) -> Result<String> {
+    let slot = mint_slot(original, storage_seed, mint).await?;
+    recovery_scan(&slot_path(original, &slot)?, storage_seed, Some(!restoring))
+        .context(WalletFailure::Storage)?;
+    Ok(slot)
+}
+
+pub(crate) fn import_error(error: anyhow::Error) -> String {
+    if let Some(message) = touch_id_error(&error) {
+        return message.into();
+    }
+    if let Some(failure) = error.downcast_ref::<WalletFailure>() {
+        return failure.to_string();
+    }
+    "Could not import wallet. Check the words, recovery passphrase and mint URL.".into()
+}
+
+fn touch_id_error(error: &anyhow::Error) -> Option<&'static str> {
+    use signer_core::keystore::KeyStoreError;
+    match error.downcast_ref::<KeyStoreError>()? {
+        KeyStoreError::Cancelled => Some("Authentication cancelled."),
+        KeyStoreError::AuthInterrupted => Some("Authentication was interrupted. Try again."),
+        KeyStoreError::AuthUnavailable => Some("macOS authentication is unavailable. Try again."),
+        KeyStoreError::AuthFailed => Some("Authentication failed. Try again."),
+        _ => None,
+    }
+}
+
+pub(crate) fn create_error(error: anyhow::Error) -> String {
+    touch_id_error(&error)
+        .unwrap_or("Could not create the wallet. Try again.")
+        .into()
 }
 
 fn import_mint(value: &str) -> Result<String> {
@@ -959,7 +1476,7 @@ fn import_mint(value: &str) -> Result<String> {
     Ok(url.to_string().trim_end_matches('/').into())
 }
 
-async fn store_import(
+async fn store_mint(
     original: &std::path::Path,
     identity_seed: &[u8; 64],
     seed: &[u8; 64],
@@ -971,6 +1488,16 @@ async fn store_import(
     hash.update(mint.as_bytes());
     let slot = format!("{:x}", hash.finalize());
     let path = slot_path(original, &slot)?;
+    store_wallet_file(&path, identity_seed, seed, mint).await?;
+    Ok(slot)
+}
+
+async fn store_wallet_file(
+    path: &std::path::Path,
+    identity_seed: &[u8; 64],
+    seed: &[u8; 64],
+    mint: &str,
+) -> Result<()> {
     if !path.exists() {
         let temporary = path.with_extension("importing");
         let password = database_password(identity_seed);
@@ -985,47 +1512,359 @@ async fn store_import(
         }
         std::fs::File::open(&temporary)?.sync_all()?;
         // Publish without replacing a wallet another process may have opened.
-        match std::fs::hard_link(&temporary, &path) {
+        match std::fs::hard_link(&temporary, path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.into()),
         }
         std::fs::remove_file(&temporary)?;
     }
-    // Validate existing imports too. Re-importing never resets CDK counters,
-    // proofs, transaction history, or pending operations.
-    open_path(path, identity_seed, true).await?;
-    Ok(slot)
+    let (stored_seed, stored_mint) =
+        wallet_profile(path, database_password(identity_seed).as_str())?;
+    ensure!(
+        *stored_seed == *seed && stored_mint == mint,
+        "wallet profile mismatch"
+    );
+    open_path(path.to_path_buf(), identity_seed, true).await?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct WalletBackup {
+    words: Option<String>,
+    mints: Vec<String>,
+    passphrase_required: bool,
+}
+
+impl Drop for WalletBackup {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        if let Some(words) = self.words.as_mut() {
+            words.zeroize();
+        }
+    }
 }
 
 #[tauri::command]
-pub async fn wallet_import(
+pub async fn wallet_backup(
     app: AppHandle,
     state: State<'_, AppState>,
     service: State<'_, WalletService>,
     account: i64,
-    recovery: WalletImport,
+) -> Result<WalletBackup, String> {
+    let _guard = service.gate.lock().await;
+    let epoch = service.epoch.load(Ordering::SeqCst);
+    (|| -> Result<WalletBackup> {
+        let identity_seed = Zeroizing::new(
+            state
+                .session
+                .vault()
+                .wallet_storage_seed(AccountId::new(account))?,
+        );
+        let original = original_wallet_path(&app, &state, account)?;
+        let mints = wallet_choices(&original, &identity_seed)?
+            .into_iter()
+            .map(|choice| choice.label)
+            .collect();
+        let recovery = read_recovery(&original, &identity_seed)?;
+        ensure!(
+            epoch == service.epoch.load(Ordering::SeqCst)
+                && state.session.vault().holds(AccountId::new(account)),
+            "account locked during backup"
+        );
+        Ok(WalletBackup {
+            words: Some(recovery.0.to_string()),
+            mints,
+            passphrase_required: recovery.1,
+        })
+    })()
+    .map_err(error)
+}
+
+struct CashuApproval {
+    account: i64,
+    mint: String,
+    amount: u64,
+    maximum: u64,
+    expiry: u64,
+    epoch: u64,
+}
+
+#[derive(Serialize)]
+struct PendingTokenView {
+    id: String,
+    amount: u64,
+}
+
+#[derive(Serialize)]
+pub struct TokenView {
+    id: String,
+    amount: u64,
+    mint: String,
+    token: String,
+}
+
+impl Drop for TokenView {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.token.zeroize();
+    }
+}
+
+#[derive(Serialize)]
+pub struct SendTokenView {
+    wallet: WalletView,
+    transfer: TokenView,
+}
+
+#[derive(Serialize)]
+pub struct TokenInfo {
+    amount: u64,
+    mint: String,
+}
+
+fn parse_token(value: &str) -> Result<Token> {
+    ensure!(value.len() <= 100_000, "token too large");
+    let value = value.trim();
+    let token = Token::from_str(value.strip_prefix("cashu:").unwrap_or(value))?;
+    ensure!(
+        token.unit().unwrap_or(CurrencyUnit::Sat) == CurrencyUnit::Sat,
+        "only sat tokens are supported"
+    );
+    Ok(token)
+}
+
+#[tauri::command]
+pub fn wallet_inspect_token(token: String) -> Result<TokenInfo, String> {
+    let token = Zeroizing::new(token);
+    (|| -> Result<TokenInfo> {
+        let parsed = parse_token(&token)?;
+        Ok(TokenInfo {
+            amount: parsed.value()?.into(),
+            mint: parsed.mint_url()?.to_string(),
+        })
+    })()
+    .map_err(|_| "Use a valid Cashu token denominated in sats.".into())
+}
+
+fn send_options() -> SendOptions {
+    SendOptions {
+        include_fee: true,
+        max_proofs: Some(16),
+        ..Default::default()
+    }
+}
+
+async fn pending_tokens(wallet: &Wallet) -> Result<Vec<PendingTokenView>> {
+    use cdk::wallet::types::OperationData;
+    let mut pending = Vec::new();
+    for id in wallet.get_pending_sends().await?.into_iter().take(30) {
+        if let Some(saga) = wallet.localstore.get_saga(&id).await? {
+            if let OperationData::Send(data) = saga.data {
+                pending.push(PendingTokenView {
+                    id: id.to_string(),
+                    amount: data.amount.into(),
+                });
+            }
+        }
+    }
+    Ok(pending)
+}
+
+async fn stored_token(wallet: &Wallet, operation: &str) -> Result<TokenView> {
+    use cdk::wallet::types::{OperationData, SendSagaState, WalletSagaState};
+    let id = operation.parse()?;
+    let saga = wallet
+        .localstore
+        .get_saga(&id)
+        .await?
+        .ok_or_else(|| anyhow!("token not pending"))?;
+    ensure!(
+        saga.mint_url == wallet.mint_url
+            && saga.state == WalletSagaState::Send(SendSagaState::TokenCreated),
+        "token not pending at this mint"
+    );
+    let OperationData::Send(data) = saga.data else {
+        bail!("not a send");
+    };
+    Ok(TokenView {
+        id: operation.into(),
+        amount: data.amount.into(),
+        mint: wallet.mint_url.to_string(),
+        token: data.token.ok_or_else(|| anyhow!("missing token"))?,
+    })
+}
+
+#[tauri::command]
+pub async fn wallet_review_send(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    service: State<'_, WalletService>,
+    account: i64,
+    amount: u64,
+) -> Result<PaymentView, String> {
+    if !(1..=10_000).contains(&amount) {
+        return Err("Enter an amount between 1 and 10,000 sats.".into());
+    }
+    let _guard = service.gate.lock().await;
+    let epoch = service.epoch.load(Ordering::SeqCst);
+    async {
+        let wallet = open(&app, &state, account).await?;
+        let prepared = wallet.prepare_send(amount.into(), send_options()).await?;
+        let fee: u64 = prepared.fee().into();
+        // Reviews release their reservations. Confirmation rechecks fees and funds.
+        prepared.cancel().await?;
+        ensure!(
+            epoch == service.epoch.load(Ordering::SeqCst)
+                && state.session.vault().holds(AccountId::new(account)),
+            "wallet locked during review"
+        );
+        let quote = nostr::key::Keys::generate().public_key().to_hex();
+        let maximum = amount
+            .checked_add(fee)
+            .ok_or_else(|| anyhow!("amount overflow"))?;
+        let expiry = now() + 120;
+        let mut approvals = service
+            .cashu_approvals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        approvals.retain(|_, approval| approval.account != account && approval.expiry > now());
+        approvals.insert(
+            quote.clone(),
+            CashuApproval {
+                account,
+                mint: wallet.mint_url.to_string(),
+                amount,
+                maximum,
+                expiry,
+                epoch,
+            },
+        );
+        Ok(PaymentView {
+            quote,
+            amount,
+            max_fee: fee,
+            maximum,
+            expiry,
+            destination: format!("Cashu token · {}", wallet.mint_url),
+        })
+    }
+    .await
+    .map_err(error)
+}
+
+fn validate_cashu_approval(
+    approval: &CashuApproval,
+    account: i64,
+    mint: &str,
+    epoch: u64,
+) -> Result<()> {
+    ensure!(
+        approval.account == account
+            && approval.mint == mint
+            && approval.epoch == epoch
+            && approval.expiry > now(),
+        "review this token again"
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn wallet_send_token(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    service: State<'_, WalletService>,
+    account: i64,
+    quote: String,
+) -> Result<SendTokenView, String> {
+    let _guard = service.gate.lock().await;
+    let approval = service
+        .cashu_approvals
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&quote)
+        .ok_or("Review this token again before creating it.")?;
+    async {
+        let wallet = open(&app, &state, account).await?;
+        validate_cashu_approval(
+            &approval,
+            account,
+            &wallet.mint_url.to_string(),
+            service.epoch.load(Ordering::SeqCst),
+        )?;
+        let prepared = wallet
+            .prepare_send(approval.amount.into(), send_options())
+            .await?;
+        let maximum: u64 = (prepared.amount() + prepared.fee()).into();
+        if maximum > approval.maximum
+            || !state.session.vault().holds(AccountId::new(account))
+            || validate_cashu_approval(
+                &approval,
+                account,
+                &wallet.mint_url.to_string(),
+                service.epoch.load(Ordering::SeqCst),
+            )
+            .is_err()
+        {
+            prepared.cancel().await?;
+            bail!("fees changed or account locked; review again");
+        }
+        let operation = prepared.operation_id().to_string();
+        // CDK saves the token and pending proofs in SQLCipher before returning.
+        // Losing this response never requires creating another token.
+        prepared.confirm(None).await?;
+        let transfer = stored_token(&wallet, &operation).await?;
+        let wallet = view(&wallet).await?;
+        ensure!(
+            approval.epoch == service.epoch.load(Ordering::SeqCst)
+                && state.session.vault().holds(AccountId::new(account)),
+            "account locked; reopen the pending token after unlocking"
+        );
+        Ok(SendTokenView { wallet, transfer })
+    }
+    .await
+    .map_err(error)
+}
+
+#[tauri::command]
+pub async fn wallet_show_token(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    service: State<'_, WalletService>,
+    account: i64,
+    operation: String,
+) -> Result<TokenView, String> {
+    let _guard = service.gate.lock().await;
+    let epoch = service.epoch.load(Ordering::SeqCst);
+    async {
+        let wallet = open(&app, &state, account).await?;
+        let token = stored_token(&wallet, &operation).await?;
+        ensure!(
+            epoch == service.epoch.load(Ordering::SeqCst)
+                && state.session.vault().holds(AccountId::new(account)),
+            "account locked"
+        );
+        Ok(token)
+    }
+    .await
+    .map_err(error)
+}
+
+#[tauri::command]
+pub async fn wallet_reclaim_token(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    service: State<'_, WalletService>,
+    account: i64,
+    operation: String,
 ) -> Result<WalletView, String> {
-    let words = Zeroizing::new(recovery.mnemonic);
-    let passphrase = Zeroizing::new(recovery.passphrase);
-    let seed = import_seed(&words, &passphrase)
-        .map_err(|_| "Enter a valid BIP-39 seed phrase and optional recovery passphrase.")?;
-    let mint = import_mint(&recovery.mint).map_err(|_| "Enter the original mint’s HTTPS URL.")?;
     let _guard = service.gate.lock().await;
     service.lock();
     async {
-        let identity_seed =
-            Zeroizing::new(state.session.vault().cashu_seed(AccountId::new(account))?);
-        let original = original_wallet_path(&app, &state, account)?;
-        let slot = store_import(&original, &identity_seed, &seed, &mint).await?;
-        ensure!(
-            state.session.vault().holds(AccountId::new(account)),
-            "account locked during import"
-        );
-        select_slot(&original, &slot)?;
-        let wallet = open_path(slot_path(&original, &slot)?, &identity_seed, true).await?;
-        // Save first, so a network failure cannot discard the imported seed.
-        // Recovery is an explicit next step and can be retried after reopening.
+        let wallet = open(&app, &state, account).await?;
+        // Verify that the operation belongs to this mint before any mutation.
+        stored_token(&wallet, &operation).await?;
+        wallet.revoke_send(operation.parse()?).await?;
         view(&wallet).await
     }
     .await

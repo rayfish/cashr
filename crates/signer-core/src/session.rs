@@ -413,7 +413,7 @@ impl Session {
     ) -> Result<Decision> {
         let request = ApprovalRequest {
             account: account.id,
-            account_label: account.label.clone(),
+            account_label: self.storage.account(account.id)?.label,
             client: client.id,
             client_public_key: client.public_key,
             client_name: client.name.clone(),

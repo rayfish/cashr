@@ -20,6 +20,15 @@ use crate::account::AccountId;
 use crate::error::{Result, SignerError};
 use crate::keystore::{KeyHandle, KeyRole, KeyStore};
 
+/// Domain-separated database encryption material; not the Cashu spending seed.
+pub fn wallet_storage_seed(keys: &Keys) -> [u8; 64] {
+    use sha2::{Digest, Sha512};
+    let mut hash = Sha512::new();
+    hash.update(b"byrgi/cashu/wallet-seed/v1\0");
+    hash.update(keys.secret_key().as_secret_bytes());
+    hash.finalize().into()
+}
+
 /// One account's two unlocked keys.
 struct AccountKeys {
     identity: Keys,
@@ -92,6 +101,11 @@ impl Vault {
         self.write().clear();
     }
 
+    /// Drop one account's keys without locking the other accounts.
+    pub fn forget(&self, account: AccountId) {
+        self.write().remove(&account);
+    }
+
     pub fn is_unlocked(&self) -> bool {
         !self.read().is_empty()
     }
@@ -100,14 +114,10 @@ impl Vault {
         self.read().contains_key(&account)
     }
 
-    /// Domain-separated wallet seed; never exposes the Nostr secret itself.
-    pub fn cashu_seed(&self, account: AccountId) -> Result<[u8; 64]> {
-        use sha2::{Digest, Sha512};
+    /// Derive the database encryption material without exposing the Nostr key.
+    pub fn wallet_storage_seed(&self, account: AccountId) -> Result<[u8; 64]> {
         self.with(account, Which::Identity, |keys| {
-            let mut hash = Sha512::new();
-            hash.update(b"byrgi/cashu/wallet-seed/v1\0");
-            hash.update(keys.secret_key().as_secret_bytes());
-            Ok(hash.finalize().into())
+            Ok(wallet_storage_seed(keys))
         })
     }
 
@@ -254,6 +264,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn forgetting_an_account_revokes_its_keys_without_locking_others() {
+        let vault = Vault::new();
+        let deleted = AccountId::new(1);
+        let remaining = AccountId::new(2);
+        for account in [deleted, remaining] {
+            vault.write().insert(
+                account,
+                AccountKeys {
+                    identity: Keys::generate(),
+                    transport: Keys::generate(),
+                },
+            );
+        }
+        let retained_seed = vault.wallet_storage_seed(remaining).unwrap();
+        vault.forget(deleted);
+        assert!(!vault.holds(deleted));
+        assert!(vault.wallet_storage_seed(deleted).is_err());
+        assert!(vault
+            .sign_relay_auth(
+                deleted,
+                &RelayUrl::parse("wss://relay.example").unwrap(),
+                "challenge"
+            )
+            .is_err());
+        assert_eq!(vault.wallet_storage_seed(remaining).unwrap(), retained_seed);
+        vault.forget(deleted);
+    }
+
+    #[test]
     fn wallet_seed_is_stable_separate_from_identity_and_unavailable_when_locked() {
         let vault = Vault::new();
         let account = AccountId::new(1);
@@ -265,12 +304,12 @@ mod tests {
                 transport: Keys::generate(),
             },
         );
-        let seed = vault.cashu_seed(account).unwrap();
-        assert_eq!(seed, vault.cashu_seed(account).unwrap());
+        let seed = vault.wallet_storage_seed(account).unwrap();
+        assert_eq!(seed, vault.wallet_storage_seed(account).unwrap());
         assert_ne!(&seed[..32], identity.secret_key().as_secret_bytes());
-        assert!(vault.cashu_seed(AccountId::new(2)).is_err());
+        assert!(vault.wallet_storage_seed(AccountId::new(2)).is_err());
         vault.lock();
-        assert!(vault.cashu_seed(account).is_err());
+        assert!(vault.wallet_storage_seed(account).is_err());
     }
 
     #[test]

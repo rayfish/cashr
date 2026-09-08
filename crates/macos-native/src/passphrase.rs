@@ -1,19 +1,8 @@
-//! The unlock passphrase, kept in a file behind Touch ID.
+//! Internal device password, accessed by the app only after macOS authentication.
 //!
-//! Opt in, and off until the user asks. It buys one Touch ID press in place of
-//! typing, and it costs the thing the key files were for: the passphrase now
-//! sits on disk beside them, so anything that can read your files can open
-//! your keys. Touch ID here is the app asking and honouring the answer, not
-//! the system refusing without it.
-//!
-//! The Keychain would be the better home, and this used to be there. An item
-//! there is bound to the code signature that created it, and not to the
-//! signature's designated requirement but to the binary, so every rebuild and
-//! every app update makes the app a stranger to its own item and the user gets
-//! a login password dialog. Sealing the secret under a Secure Enclave key
-//! avoids both problems and is what a password manager does; `presence` has
-//! the measured reason that is not open to us. A file asks for nothing and
-//! never puts a dialog in the way, and buys correspondingly less.
+//! The existing storage is a 0600 file beside the encrypted key files. The authentication gate
+//! is enforced by this app, not by filesystem or Secure Enclave access control.
+//! Anyone who can read both files can decrypt the keys.
 
 use std::fs;
 use std::io;
@@ -25,8 +14,8 @@ use signer_core::keystore::KeyStoreError;
 use crate::items;
 use crate::presence;
 
-/// Completes the sentence macOS shows: "Byrgi is trying to ...".
-const REASON: &str = "unlock your nostr keys";
+/// Completes the sentence macOS shows: "Cashr is trying to ...".
+const REASON: &str = "unlock your wallet";
 
 /// Where an earlier version kept the passphrase.
 const LEGACY_ITEM: &str = "unlock.passphrase";
@@ -53,7 +42,23 @@ impl PassphraseStore {
     /// Presence first, so a cancelled prompt never reaches the file.
     pub async fn load(&self) -> Result<SecretString, KeyStoreError> {
         presence::require(REASON).await?;
+        self.read()
+    }
 
+    /// Set up an internal encryption password only after macOS authentication.
+    /// The user never chooses, types, or sees this value.
+    pub async fn load_or_create(&self) -> Result<SecretString, KeyStoreError> {
+        presence::require(REASON).await?;
+        if self.is_set() {
+            return self.read();
+        }
+        use secrecy::ExposeSecret;
+        let secret = SecretString::from(nostr::key::Keys::generate().secret_key().to_secret_hex());
+        self.store(secret.expose_secret())?;
+        Ok(secret)
+    }
+
+    fn read(&self) -> Result<SecretString, KeyStoreError> {
         let bytes = fs::read(&self.path).map_err(|e| match e.kind() {
             io::ErrorKind::NotFound => {
                 KeyStoreError::Backend("no passphrase is stored".to_string())

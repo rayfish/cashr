@@ -67,6 +67,21 @@ pub struct FileKeyStore {
 }
 
 impl FileKeyStore {
+    /// Keep the existing encrypted key file until recovery has committed.
+    pub fn recovery_backup(&self, account: AccountId) -> Result<KeyFileRecovery, KeyStoreError> {
+        let path = self.path(account);
+        let backup = path.with_extension(format!(
+            "{}.recovery",
+            Keys::generate().public_key().to_hex()
+        ));
+        fs::hard_link(&path, &backup)
+            .map_err(|e| io_error("could not preserve the key file", e))?;
+        Ok(KeyFileRecovery {
+            path,
+            backup,
+            committed: false,
+        })
+    }
     /// `dir` is created if it does not exist, and made unreadable to anyone
     /// else. Nothing is decrypted at rest, so this is depth rather than the
     /// defence, but a key file with a permission bit missing is still a key
@@ -205,6 +220,28 @@ impl FileKeyStore {
     }
 }
 
+pub struct KeyFileRecovery {
+    path: PathBuf,
+    backup: PathBuf,
+    committed: bool,
+}
+
+impl KeyFileRecovery {
+    pub fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for KeyFileRecovery {
+    fn drop(&mut self) {
+        if !self.committed {
+            // store() publishes by rename, so this link still holds the old
+            // encrypted bytes even after the replacement was written.
+            let _ = fs::rename(&self.backup, &self.path);
+        }
+    }
+}
+
 #[async_trait]
 impl KeyStore for FileKeyStore {
     async fn load(&self, handle: KeyHandle) -> Result<Keys, KeyStoreError> {
@@ -298,6 +335,49 @@ mod tests {
             identity: Keys::generate().secret_key().clone(),
             transport: Keys::generate().secret_key().clone(),
         }
+    }
+
+    #[tokio::test]
+    async fn recovered_keys_replace_only_the_selected_account_and_rollback_on_failure() {
+        let (_dir, store) = store();
+        let id = AccountId::new(1);
+        let other = AccountId::new(2);
+        let original = account_keys();
+        let second = account_keys();
+        store.set_passphrase("old device password");
+        store.store(id, &original).await.unwrap();
+        store.store(other, &second).await.unwrap();
+        let original_bytes = fs::read(store.path(id)).unwrap();
+        let other_bytes = fs::read(store.path(other)).unwrap();
+        let replacement = AccountKeys {
+            identity: original.identity.clone(),
+            transport: Keys::generate().secret_key().clone(),
+        };
+        {
+            let _rollback = store.recovery_backup(id).unwrap();
+            store.set_passphrase("new device password");
+            store.store(id, &replacement).await.unwrap();
+        }
+        assert_eq!(fs::read(store.path(id)).unwrap(), original_bytes);
+        let backup = store.recovery_backup(id).unwrap();
+        store.store(id, &replacement).await.unwrap();
+        let restored = store
+            .load(KeyHandle::new(id, KeyRole::Identity))
+            .await
+            .unwrap();
+        assert_eq!(restored.secret_key(), &original.identity);
+        backup.commit();
+        assert_eq!(fs::read(store.path(other)).unwrap(), other_bytes);
+        store.clear_passphrase();
+        store.set_passphrase("new device password");
+        assert_eq!(
+            store
+                .load(KeyHandle::new(id, KeyRole::Transport))
+                .await
+                .unwrap()
+                .secret_key(),
+            &replacement.transport
+        );
     }
 
     #[tokio::test]

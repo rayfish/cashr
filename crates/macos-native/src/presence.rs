@@ -21,9 +21,9 @@
 
 use signer_core::keystore::KeyStoreError;
 
-/// Ask for Touch ID, the watch, or the login password, whichever the Mac has.
+/// Prefer Touch ID, with the Mac login password handled by macOS when needed.
 ///
-/// `reason` completes the sentence macOS shows: "Byrgi is trying to ...".
+/// `reason` completes the sentence macOS shows: "Cashr is trying to ...".
 pub async fn require(reason: &str) -> Result<(), KeyStoreError> {
     platform::require(reason).await
 }
@@ -34,14 +34,14 @@ mod platform {
 
     use block2::RcBlock;
     use objc2::runtime::Bool;
-    use objc2_foundation::{NSError, NSInteger, NSString};
+    use objc2_foundation::{NSDebugDescriptionErrorKey, NSError, NSInteger, NSString};
     use objc2_local_authentication::{LAContext, LAError, LAPolicy};
     use signer_core::keystore::KeyStoreError;
     use tokio::task::spawn_blocking;
 
     /// What the reply block hands back: the code when it refused, or nothing
     /// when it passed.
-    type Answer = Option<NSInteger>;
+    type Answer = Option<(NSInteger, bool)>;
 
     pub(super) async fn require(reason: &str) -> Result<(), KeyStoreError> {
         let reason = reason.to_string();
@@ -55,16 +55,39 @@ mod platform {
             let (tx, rx) = channel::<Answer>();
 
             let reply = RcBlock::new(move |ok: Bool, error: *mut NSError| {
-                let answer = (!ok.as_bool())
-                    .then(|| unsafe { error.as_ref() }.map_or(0, |error| error.code()));
+                let answer = (!ok.as_bool()).then(|| {
+                    unsafe { error.as_ref() }.map_or((0, false), |error| {
+                        let debug = error
+                            .userInfo()
+                            .objectForKey(unsafe { NSDebugDescriptionErrorKey });
+                        let debug = debug
+                            .as_ref()
+                            .and_then(|value| value.downcast_ref::<NSString>())
+                            .map(|value| value.to_string())
+                            .unwrap_or_default();
+                        let reason = format!(
+                            "{} {} {}",
+                            debug,
+                            error.localizedDescription(),
+                            error
+                                .localizedFailureReason()
+                                .map(|value| value.to_string())
+                                .unwrap_or_default()
+                        )
+                        .to_lowercase();
+                        let closed_lid = reason.contains("closed lid")
+                            || reason.contains("lid is closed")
+                            || reason.contains("closed clamshell");
+                        (error.code(), closed_lid)
+                    })
+                });
                 let _ = tx.send(answer);
             });
 
-            // `DeviceOwnerAuthentication` is Touch ID with the login password
-            // behind it, which is what makes this usable on a Mac with no
-            // sensor or with a finger that will not read.
             let context = unsafe { LAContext::new() };
             unsafe {
+                // macOS chooses Touch ID when available and offers the login
+                // password itself when unavailable (including a closed lid).
                 context.evaluatePolicy_localizedReason_reply(
                     LAPolicy::DeviceOwnerAuthentication,
                     &NSString::from_str(&reason),
@@ -78,18 +101,18 @@ mod platform {
 
         match answer {
             Ok(Ok(None)) => Ok(()),
-            Ok(Ok(Some(code))) => Err(translate(code)),
+            Ok(Ok(Some((code, closed_lid)))) => Err(translate(code, closed_lid)),
             // The block went away without answering, or the thread did.
             // Neither should happen, and refusing is the safe reading of it.
             Ok(Err(_)) | Err(_) => Err(KeyStoreError::AuthFailed),
         }
     }
 
-    fn translate(code: NSInteger) -> KeyStoreError {
+    fn translate(code: NSInteger, closed_lid: bool) -> KeyStoreError {
+        tracing::info!(code, closed_lid, "LocalAuthentication did not complete");
         match LAError(code) {
-            LAError::UserCancel | LAError::AppCancel | LAError::SystemCancel => {
-                KeyStoreError::Cancelled
-            }
+            LAError::UserCancel => KeyStoreError::Cancelled,
+            LAError::AppCancel | LAError::SystemCancel => KeyStoreError::AuthInterrupted,
             // No sensor, nothing enrolled, or no password set. Distinct from
             // a refusal, and worth a different sentence. The TouchID names for
             // these are the same numbers under an older spelling.
@@ -97,6 +120,26 @@ mod platform {
             | LAError::BiometryNotEnrolled
             | LAError::PasscodeNotSet => KeyStoreError::AuthUnavailable,
             _ => KeyStoreError::AuthFailed,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn system_interruption_and_user_cancellation_remain_distinct() {
+            assert!(matches!(
+                translate(LAError::SystemCancel.0, true),
+                KeyStoreError::AuthInterrupted
+            ));
+            assert!(matches!(
+                translate(LAError::SystemCancel.0, false),
+                KeyStoreError::AuthInterrupted
+            ));
+            assert!(matches!(
+                translate(LAError::UserCancel.0, true),
+                KeyStoreError::Cancelled
+            ));
         }
     }
 }

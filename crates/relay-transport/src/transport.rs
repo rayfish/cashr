@@ -157,10 +157,12 @@ impl Transport for RelayTransport {
             ));
         }
 
-        // One relay accepting is enough for the client to get its answer.
+        // A disconnected relay stops draining its bounded queue. Never wait
+        // for that queue: doing so blocks healthy relays and the account's
+        // request loop as well. Success means queued, not acknowledged.
         let mut delivered = false;
         for sender in senders {
-            if sender.send(event.clone()).await.is_ok() {
+            if sender.try_send(event.clone()).is_ok() {
                 delivered = true;
             }
         }
@@ -200,5 +202,66 @@ impl Transport for RelayTransport {
                 },
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr::event::{EventBuilder, FinalizeEvent};
+    use nostr::key::Keys;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn full_relay_queue_does_not_block_healthy_relays_or_later_requests() {
+        let transport = RelayTransport::new(Arc::new(Vault::new()));
+        let account = AccountId::new(1);
+        let dead = RelayUrl::parse("wss://offline.example").unwrap();
+        let live = RelayUrl::parse("wss://online.example").unwrap();
+        let (dead_sender, _dead_receiver) = channel(RELAY_QUEUE);
+        let (live_sender, mut live_receiver) = channel(RELAY_QUEUE);
+        let response = EventBuilder::new(Kind::NostrConnect, "test response")
+            .finalize(&Keys::generate())
+            .unwrap();
+        for _ in 0..RELAY_QUEUE {
+            dead_sender.try_send(response.clone()).unwrap();
+        }
+        let link = |relay: &RelayUrl, outgoing| Link {
+            outgoing,
+            health: Arc::new(Mutex::new(RelayHealth {
+                relay: relay.clone(),
+                connected: false,
+                last_error: None,
+            })),
+            task: tokio::spawn(std::future::pending()),
+        };
+        transport.pools().insert(
+            account,
+            Pool {
+                relays: vec![dead.clone(), live.clone()],
+                links: HashMap::from([
+                    (dead.clone(), link(&dead, dead_sender)),
+                    (live.clone(), link(&live, live_sender)),
+                ]),
+            },
+        );
+        for _ in 0..2 {
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                transport.publish(account, response.clone(), vec![]),
+            )
+            .await
+            .expect("offline relay must not stall the signer")
+            .unwrap();
+            assert_eq!(live_receiver.try_recv().unwrap().id, response.id);
+        }
+        drop(live_receiver);
+        assert!(tokio::time::timeout(
+            Duration::from_secs(1),
+            transport.publish(account, response, vec![])
+        )
+        .await
+        .expect("all unavailable queues must fail promptly")
+        .is_err());
     }
 }

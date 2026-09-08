@@ -16,8 +16,9 @@ function app(scan = async () => [], pair = async () => ({ client_name: 'Test cli
   const events = new Map();
   const calls = [];
   const context = vm.createContext({
-    window: { __TAURI__: { core: { invoke: async (command, args) => {
+    window: { addEventListener(name, handler) { events.set('window:' + name, handler); }, __TAURI__: { core: { invoke: async (command, args) => {
       calls.push({ command, args });
+      if (command === 'unlock_with_touch_id') return scan(command, args);
       if (command.startsWith('scan_') || command === 'prepare_scan') return scan(command);
       if (command === 'pair_client') return pair(args);
       if (command === 'prompts') return prompts();
@@ -37,6 +38,133 @@ function app(scan = async () => [], pair = async () => ({ client_name: 'Test cli
   return { context, calls, elements, events, get: id => context.document.getElementById(id) };
 }
 
+test('wallet errors remain available inline without a duplicate global toast', async () => {
+  const view = app(async () => { throw new Error('Wallet failure fixture'); });
+  let walletCall;
+  view.context.window.WalletUI = { init: call => { walletCall = call; } };
+  view.context.wire();
+  view.get('toast').hidden = true;
+  await assert.rejects(walletCall('scan_fixture', {}), /Wallet failure fixture/);
+  assert.equal(view.get('toast').hidden, true);
+  assert.equal(vm.runInContext('state.busy', view.context), 0);
+  await assert.rejects(view.context.call('scan_fixture', {}), /Wallet failure fixture/);
+  assert.equal(view.get('toast').hidden, false);
+});
+
+test('restoring a wallet sends one recovery phrase and clears secret inputs immediately', async () => {
+  const view = app();
+  let finish;
+  const walletViews = [], walletOpens = [];
+  view.context.window.WalletUI = {
+    show: name => walletViews.push(name),
+    open: refresh => walletOpens.push(refresh),
+  };
+  const calls = [];
+  view.context.call = (command, args) => {
+    calls.push({ command, args: JSON.parse(JSON.stringify(args)) });
+    return new Promise(resolve => { finish = resolve; });
+  };
+  view.context.refreshAll = async () => {};
+  vm.runInContext('state.unlocked = false; state.tab = "settings"', view.context);
+  view.context.startWalletSetup(true, 2);
+  view.get('account-label').value = 'Recovered';
+  for (let i=1;i<=12;i++) view.get('recovery-word-'+i).value = i===12 ? 'about' : 'abandon';
+  view.get('account-recovery-passphrase').value = 'fixture';
+  view.get('account-mint').value = 'https://mint.example';
+  const pending = view.context.saveAccount(true);
+  await view.context.saveAccount(true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, 'import_account');
+  assert.equal(calls[0].args.recovery.mnemonic.split(' ').length, 12);
+  assert.equal(calls[0].args.recovery.passphrase, 'fixture');
+  assert.equal(calls[0].args.recovery.mint, 'https://mint.example');
+  assert.equal(calls[0].args.recovery.account, 2);
+  assert.equal('secret' in calls[0].args, false);
+  for (let i=1;i<=24;i++) assert.equal(view.get('recovery-word-'+i).value, '');
+  assert.equal(view.get('account-recovery-passphrase').value, '');
+  finish({ id: 2 });
+  await pending;
+  assert.equal(vm.runInContext('state.account', view.context), 2);
+  assert.equal(view.get('account-new').hidden, true);
+  assert.equal(vm.runInContext('state.tab', view.context), 'wallet');
+  assert.deepEqual(walletViews, ['home']);
+  assert.deepEqual(walletOpens, [true]);
+  assert.doesNotMatch(view.get('wallet-status').textContent, /Recover tokens/);
+});
+
+test('Touch ID unlock targets the selected wallet and leaves cancellation retryable', async () => {
+  let args;
+  const view = app(async (command, input) => {
+    assert.equal(command, 'unlock_with_touch_id');
+    args = input;
+    throw 'Authentication cancelled.';
+  });
+  vm.runInContext('state.account = 7', view.context);
+  view.context.refreshStatus = async () => {};
+  await view.context.unlockWithTouchId();
+  assert.equal(args.account, 7);
+  assert.equal('passphrase' in args, false);
+  assert.equal(view.get('unlock-touch-id').disabled, false);
+  assert.equal(view.get('unlock-error').hidden, false);
+  assert.equal(view.get('unlock-error').textContent, 'Authentication cancelled.');
+});
+
+test('pasting a phrase fills numbered fields from the beginning and normalizes whitespace', () => {
+  const view = app();
+  const paste = text => ({ preventDefault() {}, clipboardData: { getData: () => text } });
+  view.context.pasteRecoveryWords(paste('  ABANDON\n'.repeat(11) + '\tABOUT  '), 6);
+  assert.equal(view.get('recovery-count').value, '12');
+  for (let i=1;i<=12;i++) assert.equal(view.get('recovery-word-'+i).value, i===12 ? 'about' : 'abandon');
+  view.context.pasteRecoveryWords(paste('zoo '.repeat(23)+'vote'), 3);
+  assert.equal(view.get('recovery-count').value, '24');
+  assert.equal(view.get('recovery-slot-24').hidden, false);
+  assert.equal(view.get('recovery-word-24').value, 'vote');
+  view.context.pasteRecoveryWords(paste('abandon '.repeat(11)+'about'), 0);
+  assert.equal(view.get('recovery-word-24').value, '');
+  assert.equal(view.get('recovery-slot-24').hidden, true);
+});
+
+test('partial pastes start at the focused word and overflow is rejected without dropping words', () => {
+  const view = app();
+  const paste = text => ({ preventDefault() {}, clipboardData: { getData: () => text } });
+  view.context.pasteRecoveryWords(paste('abandon about'), 4);
+  assert.equal(view.get('recovery-word-5').value, 'abandon');
+  assert.equal(view.get('recovery-word-6').value, 'about');
+  view.context.pasteRecoveryWords(paste('one two three'), 11);
+  assert.equal(view.get('recovery-word-12').value, '');
+  assert.match(view.get('account-error').textContent, /complete 12- or 24-word phrase/);
+});
+
+test('incomplete phrases cannot start import', async () => {
+  const view = app();
+  view.context.startWalletSetup(true);
+  view.get('recovery-word-1').value = 'abandon';
+  await view.context.saveAccount(true);
+  assert.equal(view.calls.length, 0);
+  assert.equal(view.get('account-error').textContent, 'Enter all recovery words.');
+});
+
+test('cancelled Touch ID restores the entered words only while the same setup remains open', async () => {
+  const view = app();
+  view.context.startWalletSetup(true);
+  let reject;
+  view.context.call = () => new Promise((_, fail) => { reject = fail; });
+  const fill = () => { for (let i=1;i<=12;i++) view.get('recovery-word-'+i).value = i===12 ? 'about' : 'abandon'; };
+  fill();
+  let pending = view.context.saveAccount(true);
+  assert.equal(view.get('recovery-word-1').value, '');
+  reject('Authentication cancelled.');
+  await pending;
+  assert.equal(view.get('recovery-word-1').value, 'abandon');
+  assert.equal(view.get('recovery-word-12').value, 'about');
+  assert.equal(view.get('account-import').disabled, false);
+  pending = view.context.saveAccount(true);
+  view.context.selectTab('wallet');
+  reject('Authentication was interrupted. Try again.');
+  await pending;
+  for (let i=1;i<=24;i++) assert.equal(view.get('recovery-word-'+i).value, '');
+});
+
 test('Lightning address drafts survive refreshes and switch with the selected account', () => {
   const view = app();
   vm.runInContext('state.accounts = [{ id: 1, label: "Personal", lightning_address: "alice@example.com" }, { id: 2, label: "Work", lightning_address: null }]; state.account = 1', view.context);
@@ -50,8 +178,44 @@ test('Lightning address drafts survive refreshes and switch with the selected ac
   vm.runInContext('state.account = 2', view.context);
   view.context.renderLightningAddress();
   assert.equal(view.get('lightning-address').value, '');
-  assert.equal(view.get('lightning-account').textContent, 'For Work');
   assert.equal(view.get('lightning-remove').hidden, true);
+});
+
+test('a late profile lookup cannot replace a typed address or another account', async () => {
+  const view = app();
+  view.context.wire();
+  vm.runInContext('state.accounts = [{id:1,label:"First"},{id:2,label:"Second"}]; state.account=1', view.context);
+  view.context.renderLightningAddress();
+  let finish;
+  view.context.call = () => new Promise(resolve => { finish = resolve; });
+  let pending = view.context.findLightningAddress();
+  view.get('lightning-address').value = 'manual@example.com';
+  view.get('lightning-address').oninput();
+  finish('published@minibits.cash');
+  await pending;
+  assert.equal(view.get('lightning-address').value, 'manual@example.com');
+  view.get('lightning-address').value = '';
+  view.get('lightning-address').oninput();
+  pending = view.context.findLightningAddress();
+  vm.runInContext('state.account=2', view.context);
+  view.context.renderLightningAddress();
+  finish('first@minibits.cash');
+  await pending;
+  assert.equal(view.get('lightning-address').value, '');
+});
+
+test('profile lookup fills a draft without saving or replacing an existing address', async () => {
+  const view = app();
+  vm.runInContext('state.accounts=[{id:1,label:"First"}]; state.account=1', view.context);
+  view.context.renderLightningAddress();
+  const calls = [];
+  view.context.call = async command => { calls.push(command); return 'alice@minibits.cash'; };
+  await view.context.findLightningAddress();
+  assert.equal(view.get('lightning-address').value, 'alice@minibits.cash');
+  view.context.renderLightningAddress();
+  await view.context.findLightningAddress();
+  assert.equal(view.get('lightning-address').value, 'alice@minibits.cash');
+  assert.deepEqual(calls, ['find_lightning_address']);
 });
 
 test('a newly selected locked account stays visibly locked while another account is unlocked', () => {
@@ -60,8 +224,8 @@ test('a newly selected locked account stays visibly locked while another account
   view.context.renderAccountPicker();
   view.context.renderAccountCard();
   view.context.renderUnlock();
-  assert.equal(view.get('account-picker').children[0].textContent, 'Personal · Unlocked');
-  assert.equal(view.get('account-picker').children[1].textContent, 'New · Locked');
+  assert.equal(view.get('account-picker').children[0].textContent, 'Personal');
+  assert.equal(view.get('account-picker').children[1].textContent, 'New');
   const head = view.get('account-card').children.find(node => node.className === 'card-head');
   assert.equal(head.children.find(node => node.className.startsWith('pill')).textContent, 'Locked');
   assert.equal(view.get('unlock').hidden, false);
@@ -70,9 +234,9 @@ test('a newly selected locked account stays visibly locked while another account
   assert.equal(view.get('unlock').hidden, true);
 });
 
-test('recognizes pairing, wallet, payment and secret codes without payment actions', () => {
+test('recognizes QR types and offers review actions without executing payments', () => {
   const { context } = app();
-  const describe = context.ByrgiQR.describe;
+  const describe = context.CashrQR.describe;
   assert.equal(describe('nostrconnect://abc?secret=test').action, 'pair');
   for (const [value, title] of [
     ['bunker://abc', 'Nostr signer connection'],
@@ -86,7 +250,7 @@ test('recognizes pairing, wallet, payment and secret codes without payment actio
     ['<script>alert(1)</script>', 'QR content'],
   ]) {
     assert.equal(describe(value).title, title);
-    assert.equal(describe(value).action, undefined);
+    assert.equal(describe(value).action, title === 'Cashu token' ? 'receive' : title === 'Lightning invoice' ? 'pay' : undefined);
   }
 });
 
@@ -162,7 +326,7 @@ test('Escape dismisses scan results before closing the window', () => {
   view.events.get('keydown')({ key: 'Escape', preventDefault() { prevented = true; } });
   assert.equal(prevented, true);
   assert.equal(view.get('scan-results').children.length, 0);
-  assert.equal(vm.runInContext('state.tab', view.context), 'home');
+  assert.equal(vm.runInContext('state.tab', view.context), 'wallet');
   assert.equal(view.calls.some(c => c.command === 'hide_window'), false);
 });
 
@@ -175,7 +339,7 @@ test('opening Scan QR requests permission before capturing and denial leaves cli
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(view.calls.filter(c => c.command === 'prepare_scan').length, 1);
   assert.equal(view.calls.some(c => c.command === 'scan_screen'), false);
-  assert.match(view.get('scan-status').textContent, /You can still paste/);
+  assert.match(view.get('scan-status').textContent, /paste an image/);
   assert.equal(view.get('scan-clipboard').disabled, false);
   await view.context.scanQR('clipboard');
   assert.equal(view.get('scan-results').children.length, 1);

@@ -155,7 +155,7 @@ pub fn describe(scope: Scope, event_kind: Option<Kind>) -> String {
         NostrConnectMethod::Nip04Decrypt => "decrypt a legacy private message".into(),
         NostrConnectMethod::Nip44Encrypt => "encrypt a private message".into(),
         NostrConnectMethod::Nip44Decrypt => "decrypt a private message".into(),
-        NostrConnectMethod::Ping => "check whether Byrgi is available".into(),
+        NostrConnectMethod::Ping => "check whether Cashr is available".into(),
     }
 }
 
@@ -191,7 +191,7 @@ impl RequestPreview {
         let mut preview = Self::default();
         match request {
             NostrConnectRequest::GetPublicKey => {
-                preview.explanation = "Share your public key so the app can identify your account. Your private key stays in Byrgi.".into();
+                preview.explanation = "Share your public key so the app can identify your account. Your private key stays in Cashr.".into();
             }
             NostrConnectRequest::Nip04Encrypt { public_key, .. }
             | NostrConnectRequest::Nip44Encrypt { public_key, .. } => {
@@ -205,7 +205,7 @@ impl RequestPreview {
                 preview.field("Sender", &public_key.to_hex());
             }
             NostrConnectRequest::SignEvent(event) => {
-                preview.explanation = "Byrgi signs this event with your identity. The app decides whether to publish it.".into();
+                preview.explanation = "Cashr signs this event with your identity. The app decides whether to publish it.".into();
                 let tag = |name: &str| {
                     let mut matches = event.tags.iter().filter_map(|tag| {
                         let values = tag.as_slice();

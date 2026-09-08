@@ -59,10 +59,10 @@ pub async fn scan_clipboard(app: AppHandle) -> Result<Vec<String>, String> {
 pub async fn scan_screen(app: AppHandle) -> Result<Option<Vec<String>>, String> {
     let _guard = ScanGuard::acquire()?;
     on_main(&app, qr::check_screen_access).await?;
-    let window = window::get(&app).ok_or("Byrgi's window is unavailable.")?;
+    let window = window::get(&app).ok_or("Cashr's window is unavailable.")?;
     window
         .hide()
-        .map_err(|_| "Could not hide Byrgi for screen selection.")?;
+        .map_err(|_| "Could not hide Cashr for screen selection.")?;
     // Let the window disappear before the system selector freezes the screen.
     tokio::time::sleep(std::time::Duration::from_millis(180)).await;
     let result = tauri::async_runtime::spawn_blocking(qr::capture_screen).await;

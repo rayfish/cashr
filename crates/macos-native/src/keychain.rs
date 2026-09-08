@@ -104,7 +104,7 @@ fn key_from(stored: &StoredKeys, handle: KeyHandle) -> Result<Keys, KeyStoreErro
     Ok(Keys::new(secret))
 }
 
-/// Completes the sentence macOS shows: "Byrgi is trying to ...".
+/// Completes the sentence macOS shows: "Cashr is trying to ...".
 const UNLOCK_REASON: &str = "unlock your nostr keys";
 
 #[async_trait]

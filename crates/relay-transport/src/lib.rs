@@ -6,6 +6,7 @@
 
 mod auth;
 mod connection;
+pub mod profile;
 pub mod transport;
 
 pub use transport::RelayTransport;

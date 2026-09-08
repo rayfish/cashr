@@ -1,6 +1,6 @@
 //! Showing, hiding and placing the one window.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -25,6 +25,7 @@ pub struct WindowState {
     /// it for the pin button, for a pending approval, and around any call that
     /// can raise a system dialog of its own (Touch ID, most of all).
     pinned: AtomicBool,
+    dialogs: AtomicUsize,
     hidden_at: Mutex<Option<Instant>>,
 }
 
@@ -34,7 +35,12 @@ impl WindowState {
     }
 
     pub fn is_pinned(&self) -> bool {
-        self.pinned.load(Ordering::Relaxed)
+        self.pinned.load(Ordering::Relaxed) || self.dialogs.load(Ordering::SeqCst) > 0
+    }
+
+    pub fn hold_for_dialog(&self) -> DialogHold<'_> {
+        self.dialogs.fetch_add(1, Ordering::SeqCst);
+        DialogHold(self)
     }
 
     fn mark_hidden(&self) {
@@ -49,6 +55,14 @@ impl WindowState {
             .ok()
             .and_then(|at| *at)
             .is_some_and(|at| at.elapsed() < SETTLE)
+    }
+}
+
+pub struct DialogHold<'a>(&'a WindowState);
+
+impl Drop for DialogHold<'_> {
+    fn drop(&mut self) {
+        self.0.dialogs.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -112,4 +126,21 @@ fn place_under<R: Runtime>(window: &WebviewWindow<R>, anchor: Rect) -> tauri::Re
     }
 
     window.set_position(PhysicalPosition::new(x, y))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn system_dialog_stays_pinned_despite_late_frontend_updates() {
+        let window = WindowState::default();
+        let first = window.hold_for_dialog();
+        let second = window.hold_for_dialog();
+        window.set_pinned(false);
+        assert!(window.is_pinned());
+        drop(first);
+        assert!(window.is_pinned());
+        drop(second);
+        assert!(!window.is_pinned());
+    }
 }

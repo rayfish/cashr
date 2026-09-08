@@ -1,14 +1,14 @@
 [workspace]
 
 [package]
-name = "byrgi"
+name = "cashr"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.85"
 
 [lib]
-name = "byrgi_lib"
+name = "cashr_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -26,7 +26,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 lightning-invoice = "0.34"
 url = "2"
 macos-native = { path = "../crates/macos-native" }
-nostr = { version = "0.45", features = ["std", "os-rng", "nip04", "nip44", "nip46", "nip49"] }
+nostr = { version = "0.45", features = ["std", "os-rng", "nip06", "nip04", "nip44", "nip46", "nip49"] }
 relay-transport = { path = "../crates/relay-transport" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -36,6 +36,7 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+qrcode = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

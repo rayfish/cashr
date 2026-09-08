@@ -12,22 +12,29 @@ const state = {
   lightningAccount: null,
   lightningDirty: false,
   savingLightning: false,
+  lightningLookups: new Set(),
+  lightningLookupRevision: 0,
+  findingLightning: false,
   needsMigration: false,
   hasKeychainCopies: false,
   hasTouchId: false,
-  tab: "home",
-  // Where the gear goes back to.
-  lastTab: "home",
+  tab: "wallet",
+  menuOpen: false,
   pending: 0,
   health: [],
   pinned: false,
   busy: 0,
   savingAccount: false,
+  renamingAccount: null,
+  savingRename: false,
+  recoverAccount: null,
+  setupRevision: 0,
   scanning: false,
   preparingScan: false,
   connectingScan: false,
   scanGeneration: 0,
-  scanLastTab: "home",
+  scanLastTab: "wallet",
+  scanLastWalletView: "home",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -45,14 +52,14 @@ function syncPinned() {
   invoke("set_pinned", { pinned: wanted }).catch(() => {});
 }
 
-async function call(command, args) {
+async function call(command, args, { notifyError = true } = {}) {
   state.busy += 1;
   syncPinned();
   try {
     const result = await invoke(command, args);
     return result;
   } catch (error) {
-    toast(String(error));
+    if (notifyError) toast(String(error));
     throw error;
   } finally {
     state.busy -= 1;
@@ -248,7 +255,7 @@ async function refreshStatus() {
   toggle.textContent = selectedUnlocked ? "Lock" : "Unlock";
   toggle.title = selectedUnlocked
     ? "Lock all accounts"
-    : "Unlock all accounts with your passphrase";
+    : "Unlock wallet";
 
   renderUnlock();
   renderAccountPicker();
@@ -256,63 +263,19 @@ async function refreshStatus() {
   renderAccountList();
   renderLightningAddress();
   window.WalletUI?.sync(currentAccount(), state.unlockedAccounts.includes(state.account));
+  if (state.tab === "wallet") window.WalletUI?.open();
   renderRelays();
 }
 
-/// The passphrase box, and what it is for this time.
-///
-/// Setting a passphrase and giving one are the same box with the same button,
-/// because they are the same act from where the user is standing. Only the
-/// words above it change, and they have to: one of them cannot be got wrong
-/// twice, and the other cannot be got wrong at all.
 function renderUnlock() {
-  const panel = $("unlock");
-  panel.hidden = currentAccount() ? state.unlockedAccounts.includes(state.account) : state.unlocked;
-  $("unlock-error").hidden = true;
-
-  const fresh = state.accounts.length === 0;
-  const migrating = state.needsMigration && !fresh;
-  const setting = fresh || migrating;
-
-  $("unlock-title").textContent = setting ? "Choose a passphrase" : "Unlock";
-  $("unlock-hint").textContent = migrating
-    ? "Your keys move out of the Keychain and into files encrypted with this. There is no way to recover it, and no way in without it."
-    : setting
-      ? "Your keys will be encrypted with this. There is no way to recover it, and no way in without it."
-      : "Your keys are encrypted with this.";
-  $("unlock-passphrase").autocomplete = setting
-    ? "new-password"
-    : "current-password";
-  $("unlock-go").textContent = setting ? "Set and unlock" : "Unlock";
-
-  // Touch ID is an alternative to typing, not to knowing: the box stays
-  // whatever the sensor says, because a finger that will not read is the
-  // moment the passphrase has to be reachable without hunting for it.
-  $("unlock-touch-id").hidden = !(state.hasTouchId && !setting);
-
-  // Nothing to remember while setting one either: the passphrase is stored
-  // only after it has opened something, and there is nothing to open yet.
-  const offerRemember = !state.hasTouchId && !setting;
-  $("unlock-remember-row").hidden = !offerRemember;
-  $("unlock-remember-hint").hidden = !offerRemember;
-  if (!state.hasTouchId) $("unlock-remember").checked = false;
-
-  // Only worth offering once the keys are safely somewhere else.
+  const selectedUnlocked = state.unlockedAccounts.includes(state.account);
+  $("unlock").hidden = !currentAccount() || selectedUnlocked || state.tab === "setup";
+  $("unlock-title").textContent = state.hasTouchId ? "Unlock" : "Recover wallet";
+  $("unlock-touch-id").hidden = !state.hasTouchId;
   $("keychain-leftover").hidden = !(state.unlocked && state.hasKeychainCopies);
-
-  $("touch-id-badge").textContent = state.hasTouchId ? "Enabled" : "Off";
-  $("touch-id-badge").className = `pill ${state.hasTouchId ? "is-allow" : ""}`;
-  $("touch-id-state").textContent = state.hasTouchId
-    ? "Unlock with Touch ID using a passphrase saved on this Mac. Anyone who can read that file can open your keys. Turning this off removes the saved passphrase."
-    : "Unlock with your passphrase. To enable Touch ID, select “Unlock with Touch ID next time” when unlocking. This saves your passphrase on this Mac.";
-  $("forget-touch-id").hidden = !state.hasTouchId;
   syncAccountForm();
 }
 
-/// Unlock by asking the Keychain for the passphrase, behind Touch ID.
-///
-/// Same pinning and same error line as typing it: from the user's side this is
-/// the same act done with a finger.
 async function unlockWithTouchId() {
   const button = $("unlock-touch-id");
   const error = $("unlock-error");
@@ -326,50 +289,10 @@ async function unlockWithTouchId() {
   state.busy += 1;
   syncPinned();
   try {
-    await invoke("unlock_with_touch_id");
+    await invoke("unlock_with_touch_id", { account: state.account });
     await refreshAll();
   } catch (failure) {
-    error.textContent = String(failure);
-    error.hidden = false;
-    // A cancelled prompt leaves Touch ID set up, a rejected passphrase does
-    // not. Either way the answer comes from the backend, so ask again.
     await refreshStatus();
-  } finally {
-    state.busy -= 1;
-    syncPinned();
-    button.disabled = false;
-    button.textContent = label;
-  }
-}
-
-async function submitUnlock() {
-  const field = $("unlock-passphrase");
-  const passphrase = field.value;
-  if (passphrase === "") return;
-
-  const error = $("unlock-error");
-  const button = $("unlock-go");
-  const label = button.textContent;
-  button.disabled = true;
-  button.textContent = "Working…";
-  error.hidden = true;
-
-  // Pinned by hand rather than through `call`, which toasts: a wrong
-  // passphrase belongs under the box it was typed in, not in a corner. The pin
-  // matters because migrating still reads the Keychain, and that prompt takes
-  // the focus, which would send the window away mid-unlock.
-  state.busy += 1;
-  syncPinned();
-  try {
-    // scrypt takes about a second per key by design, so the window has to say
-    // it is doing something or it reads as broken.
-    await invoke("unlock", {
-      passphrase,
-      remember: $("unlock-remember").checked,
-    });
-    field.value = "";
-    await refreshAll();
-  } catch (failure) {
     error.textContent = String(failure);
     error.hidden = false;
   } finally {
@@ -390,7 +313,7 @@ function renderAccountPicker() {
   }
   picker.disabled = false;
   for (const account of state.accounts) {
-    const option = el("option", null, `${account.label} · ${state.unlockedAccounts.includes(account.id) ? "Unlocked" : "Locked"}`);
+    const option = el("option", null, account.label);
     option.value = String(account.id);
     picker.append(option);
   }
@@ -404,14 +327,10 @@ function renderAccountCard() {
 
   card.className = "card stack account-overview";
   if (!account) {
-    const add = el("button", "primary start", "Add account in Settings");
-    add.onclick = () => {
-      if (state.tab !== "settings") toggleSettings();
-      showAccountForm(true);
-    };
+    const add = el("button", "primary start", "Create wallet");
+    add.onclick = () => startWalletSetup(false);
     card.append(
       el("div", "title", "Add your first account"),
-      el("p", "hint", "Create a new identity or import an existing private key to get started."),
       add,
     );
     return;
@@ -445,6 +364,8 @@ function renderLightningAddress() {
   const account = currentAccount();
   const changedAccount = state.lightningAccount !== (account?.id ?? null);
   if (changedAccount) {
+    state.lightningLookupRevision++;
+    state.findingLightning = false;
     state.lightningAccount = account?.id ?? null;
     state.lightningDirty = false;
     $("lightning-status").textContent = "";
@@ -452,22 +373,49 @@ function renderLightningAddress() {
   if (changedAccount || !state.lightningDirty) {
     $("lightning-address").value = account?.lightning_address ?? "";
   }
-  $("lightning-account").textContent = account ? `For ${account.label}` : "Add an account first.";
-  $("lightning-destination").textContent = account?.lightning_address
-    ? `Payments to ${account.lightning_address} go to its existing provider. Its balance and spending access stay with that provider.`
-    : "Payments to this address go to your existing provider. Its balance and spending access stay with that provider.";
   $("lightning-address").disabled = !account || state.savingLightning;
   $("lightning-save").disabled = !account || state.savingLightning;
   $("lightning-remove").disabled = state.savingLightning;
   $("lightning-remove").hidden = !account?.lightning_address;
+  $('lightning-find').disabled = !account || state.findingLightning || state.savingLightning || !!$('lightning-address').value.trim();
+  $('lightning-find').textContent = state.findingLightning ? 'Finding…' : 'Find address';
+  if (state.tab === 'settings' && account && !account.lightning_address && !state.lightningDirty && !state.lightningLookups.has(account.id)) findLightningAddress();
+}
+
+async function findLightningAddress() {
+  const account = currentAccount();
+  if (!account || state.findingLightning || $('lightning-address').value.trim()) return;
+  state.lightningLookups.add(account.id);
+  const revision = ++state.lightningLookupRevision;
+  state.findingLightning = true;
+  renderLightningAddress();
+  try {
+    const address = await call('find_lightning_address', { account: account.id }, { notifyError: false });
+    if (revision !== state.lightningLookupRevision || state.account !== account.id) return;
+    if (address) {
+      $('lightning-address').value = address;
+      state.lightningDirty = true;
+    }
+    $('lightning-status').textContent = address ? 'Found in Nostr profile.' : 'No published address found.';
+  } catch (error) {
+    if (revision === state.lightningLookupRevision) $('lightning-status').textContent = String(error);
+  } finally {
+    if (revision === state.lightningLookupRevision) {
+      state.findingLightning = false;
+      renderLightningAddress();
+    }
+  }
 }
 
 async function saveLightningAddress(remove = false) {
   const account = currentAccount();
   if (!account || state.savingLightning) return;
+  state.lightningLookupRevision++;
+  state.findingLightning = false;
+  state.lightningLookups.add(account.id);
   const address = remove ? null : $("lightning-address").value.trim();
   if (!remove && !address) {
-    $("lightning-status").textContent = "Enter a Lightning address first.";
+    $("lightning-status").textContent = "Enter a Lightning address.";
     $("lightning-address").focus();
     return;
   }
@@ -479,9 +427,9 @@ async function saveLightningAddress(remove = false) {
     await call("set_lightning_address", { account: account.id, address });
     if (state.account === account.id) state.lightningDirty = false;
     await refreshStatus();
-    if (state.account === account.id) $("lightning-status").textContent = remove ? "Address removed from Byrgi. Your provider is unchanged." : "Address saved locally. Your existing provider receives payments.";
+    if (state.account === account.id) $("lightning-status").textContent = remove ? "Address removed." : "Address saved.";
   } catch {
-    if (state.account === account.id) $("lightning-status").textContent = "Could not save the address. Check its format and try again.";
+    if (state.account === account.id) $("lightning-status").textContent = "Could not save. Check the address.";
   } finally {
     state.savingLightning = false;
     renderLightningAddress();
@@ -489,39 +437,86 @@ async function saveLightningAddress(remove = false) {
 }
 
 function renderAccountList() {
+  if (state.renamingAccount !== null && !state.accounts.some(account => account.id === state.renamingAccount)) closeRename();
   const list = $("account-list");
   list.replaceChildren();
   if (state.accounts.length === 0) {
-    list.append(empty("No accounts yet. Add one to get started."));
+    list.append(empty("No accounts yet."));
     return;
   }
 
   for (const account of state.accounts) {
-    const card = el("div", "card");
-    const grow = el("div", "grow");
-    grow.append(el("div", null, account.label), el("div", "mono", account.npub));
-    grow.append(el("span", `pill ${state.unlockedAccounts.includes(account.id) ? "is-allow" : ""}`, state.unlockedAccounts.includes(account.id) ? "Unlocked" : "Locked"));
-    card.append(grow);
+    const card = el("div", "card account-card");
+    const details = el("div", "account-card-details");
+    details.append(el("div", "title", account.label), el("div", "mono", account.npub));
+    const badges = el("div", "account-card-badges");
+    badges.append(el("span", `pill ${state.unlockedAccounts.includes(account.id) ? "is-allow" : ""}`, state.unlockedAccounts.includes(account.id) ? "Unlocked" : "Locked"));
+    card.append(details, badges);
+    const actions = el("div", "account-card-actions");
 
     if (account.is_default) {
-      card.append(el("span", "pill", "default"));
+      badges.append(el("span", "pill", "default"));
     } else {
-      const makeDefault = el("button", null, "Make default");
+      const makeDefault = el("button", "account-card-default", "Make default");
       makeDefault.onclick = async () => {
         await call("set_default_account", { account: account.id });
         await refreshStatus();
       };
-      card.append(makeDefault);
+      actions.append(makeDefault);
     }
+
+    const rename = el("button", null, "Rename");
+    rename.disabled = state.savingRename;
+    rename.onclick = () => {
+      state.renamingAccount = account.id;
+      $('account-rename-label').value = account.label;
+      $('account-rename-error').textContent = '';
+      $('account-rename').hidden = false;
+      $('account-rename-label').focus();
+      $('account-rename-label').select();
+    };
+    actions.append(rename);
 
     const remove = el("button", "danger", "Delete");
     arm(remove, "Delete", async () => {
       await call("delete_account", { account: account.id });
       await refreshAll();
     });
-    card.append(remove);
+    actions.append(remove);
+    card.append(actions);
 
     list.append(card);
+  }
+}
+
+function closeRename() {
+  state.renamingAccount = null;
+  $('account-rename').hidden = true;
+  $('account-rename-label').value = '';
+  $('account-rename-error').textContent = '';
+}
+
+async function saveRename(event) {
+  event.preventDefault();
+  if (state.savingRename || state.renamingAccount === null) return;
+  const label = $('account-rename-label').value.trim();
+  if (!label) {
+    $('account-rename-error').textContent = 'Enter a wallet name.';
+    return;
+  }
+  state.savingRename = true;
+  for (const id of ['account-rename-label', 'account-rename-save', 'account-rename-cancel']) $(id).disabled = true;
+  renderAccountList();
+  try {
+    await call('rename_account', { account: state.renamingAccount, label }, { notifyError: false });
+    closeRename();
+    await refreshStatus();
+  } catch (error) {
+    $('account-rename-error').textContent = String(error);
+  } finally {
+    state.savingRename = false;
+    for (const id of ['account-rename-label', 'account-rename-save', 'account-rename-cancel']) $(id).disabled = false;
+    renderAccountList();
   }
 }
 
@@ -533,7 +528,7 @@ function renderRelays() {
   const account = currentAccount();
   if (!account) return;
   if (account.relays.length === 0) {
-    list.append(empty("No relays. Nothing can reach this account."));
+    list.append(empty("No relays connected."));
     renderRelayHealth();
     return;
   }
@@ -591,7 +586,7 @@ async function refreshClients() {
   const list = $("client-list");
   list.replaceChildren();
   if (state.clients.length === 0) {
-    list.append(empty("No client has connected yet. Pair one from the Account tab."));
+    list.append(empty("No Nostr apps connected."));
   }
 
   for (const client of state.clients) {
@@ -661,13 +656,13 @@ async function refreshRules() {
   const list = $("rule-list");
   list.replaceChildren();
   if (state.client === null) {
-    list.append(empty("Connect an app from Account to manage its permissions here."));
+    list.append(empty("No Nostr apps connected."));
     return;
   }
 
   const rules = await call("rules", { client: state.client });
   if (rules.length === 0) {
-    list.append(empty("No saved permissions. This app will ask you to approve each request."));
+    list.append(empty("Ask for every request."));
     return;
   }
 
@@ -722,7 +717,7 @@ async function refreshActivity(append = false) {
     list.replaceChildren();
   }
   if (state.account === null) {
-    list.append(empty("Add an account to see its request history here."));
+    list.append(empty("No account selected."));
     $("activity-more").hidden = true;
     return;
   }
@@ -734,7 +729,7 @@ async function refreshActivity(append = false) {
   });
 
   if (!append && entries.length === 0) {
-    list.append(empty("No activity yet. Requests from your connected apps will appear here."));
+    list.append(empty("No activity yet."));
   }
 
   for (const entry of entries) {
@@ -756,15 +751,58 @@ async function refreshActivity(append = false) {
 
 // ------------------------------------------------------------------- wiring
 
+function recoveryFields(count = Number($('recovery-count').value) || 12) {
+  return Array.from({ length: count }, (_, index) => $('recovery-word-' + (index + 1)));
+}
+
+function setRecoveryCount(count) {
+  $('recovery-count').value = String(count);
+  for (let index = 1; index <= 24; index++) {
+    $('recovery-slot-' + index).hidden = index > count;
+    if (index > count) $('recovery-word-' + index).value = '';
+  }
+}
+
+function setRecoveryVisible(visible) {
+  for (const field of recoveryFields(24)) field.type = visible ? 'text' : 'password';
+  $('recovery-visibility').textContent = visible ? 'Hide words' : 'Show words';
+  $('recovery-visibility').setAttribute('aria-pressed', String(visible));
+}
+
+function clearRecoveryWords() {
+  setRecoveryVisible(false);
+  for (const field of recoveryFields(24)) field.value = '';
+  setRecoveryCount(12);
+  $('account-error').textContent = '';
+}
+
+function pasteRecoveryWords(event, index) {
+  if (state.savingAccount) return;
+  event.preventDefault();
+  const words = event.clipboardData.getData('text').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return;
+  const wholePhrase = words.length === 12 || words.length === 24;
+  const start = wholePhrase ? 0 : index;
+  if (!wholePhrase && words.length > recoveryFields().length - start) {
+    $('account-error').textContent = 'Paste a complete 12- or 24-word phrase.';
+    return;
+  }
+  if (wholePhrase) setRecoveryCount(words.length);
+  const fields = recoveryFields();
+  words.forEach((word, offset) => { fields[start + offset].value = word; });
+  $('account-error').textContent = '';
+  fields[Math.min(start + words.length, fields.length - 1)].focus();
+}
+
 function syncAccountForm() {
   const busy = state.savingAccount;
-  $("account-create").disabled = busy || !state.unlocked;
-  $("account-import").disabled = busy || !state.unlocked;
+  $("account-create").disabled = busy;
+  $("account-import").disabled = busy;
   $("account-label").disabled = busy;
-  $("account-secret").disabled = busy;
+  for (const id of ["recovery-count", "recovery-visibility", "account-mint", "account-recovery-passphrase"]) $(id).disabled = busy;
+  for (const field of recoveryFields(24)) field.disabled = busy;
   $("account-cancel").disabled = busy;
   $("account-add").disabled = busy;
-  $("account-locked-hint").hidden = state.unlocked;
 }
 
 function showAccountForm(shown) {
@@ -773,32 +811,71 @@ function showAccountForm(shown) {
   if (shown) {
     $("account-label").focus();
   } else {
+    state.setupRevision++;
+    state.recoverAccount = null;
     $("account-label").value = "";
-    $("account-secret").value = "";
+    clearRecoveryWords();
+    $("account-recovery-passphrase").value = "";
+    $("account-mint").value = "https://mint.minibits.cash/Bitcoin";
   }
 }
 
+function startWalletSetup(importing, recoverAccount = null) {
+  state.setupRevision++;
+  selectTab('setup');
+  $('setup-heading').textContent = importing ? 'Import wallet' : 'Create wallet';
+  $('account-create').hidden = importing;
+  $('account-import-fields').hidden = !importing;
+  showAccountForm(true);
+  state.recoverAccount = recoverAccount;
+  $('account-reconnect-hint').hidden = !recoverAccount || !state.clients?.length;
+  syncAccountForm();
+  $(importing ? 'recovery-word-1' : 'account-label').focus();
+}
+
 async function saveAccount(importing) {
-  if (state.savingAccount || !state.unlocked) return;
-  const label = $("account-label").value.trim() || (importing ? "Imported" : "Account");
-  const secret = $("account-secret").value.trim();
-  if (importing && !secret) {
-    $("account-secret").focus();
-    return;
+  if (state.savingAccount) return;
+  const fields = recoveryFields();
+  if (importing) {
+    const missing = fields.find(field => !field.value.trim());
+    if (missing) {
+      $('account-error').textContent = 'Enter all recovery words.';
+      missing.focus();
+      return;
+    }
   }
+  const revision = state.setupRevision;
+  const label = $("account-label").value.trim() || (importing ? "Restored" : "Wallet");
+  const recovery = importing ? { account: state.recoverAccount, mnemonic: fields.map(field => field.value.trim().toLowerCase()).join(' '), passphrase: $("account-recovery-passphrase").value, mint: $("account-mint").value } : null;
   const button = $(importing ? "account-import" : "account-create");
   const originalLabel = button.textContent;
   state.savingAccount = true;
-  button.textContent = importing ? "Importing…" : "Creating…";
+  button.textContent = importing ? "Restoring…" : "Creating…";
   syncAccountForm();
   try {
-    const account = await call(importing ? "import_account" : "create_account", importing ? { label, secret } : { label });
+    clearRecoveryWords();
+    $("account-recovery-passphrase").value = "";
+    const account = await call(importing ? "import_account" : "create_account", importing ? { label, recovery } : { label }, { notifyError: false });
     state.account = account.id;
     showAccountForm(false);
     await refreshAll();
-  } catch {
-    // `call` reports the error; keep the form available for correction.
+    selectTab("wallet", true);
+    if (!importing) {
+      window.WalletUI?.show("backup");
+      $("wallet-status").textContent = "Back up your recovery words.";
+    }
+  } catch (error) {
+    if (state.tab === 'setup' && revision === state.setupRevision) {
+      $('account-error').textContent = String(error);
+      if (recovery && ['Authentication cancelled.', 'Authentication was interrupted. Try again.', 'Authentication failed. Try again.', 'macOS authentication is unavailable. Try again.'].includes(String(error))) {
+        const words = recovery.mnemonic.split(' ');
+        setRecoveryCount(words.length);
+        recoveryFields().forEach((field, index) => { field.value = words[index]; });
+        $('account-recovery-passphrase').value = recovery.passphrase;
+      }
+    }
   } finally {
+    if (recovery) { recovery.mnemonic = ""; recovery.passphrase = ""; }
     state.savingAccount = false;
     button.textContent = originalLabel;
     syncAccountForm();
@@ -828,7 +905,7 @@ async function prepareScanner() {
     screenAllowed = allowed;
     if (state.tab !== "scan" || state.scanGeneration !== generation) return;
     $("scan-status").textContent = allowed ? ""
-      : "For screen selection, allow Byrgi in System Settings → Privacy & Security → Screen Recording. You can still paste an image.";
+      : "Allow Screen Recording in System Settings, or paste an image.";
   } catch (error) {
     if (state.tab === "scan" && state.scanGeneration === generation) $("scan-status").textContent = String(error);
   } finally {
@@ -841,13 +918,17 @@ async function prepareScanner() {
   }
 }
 
-function toggleScanner() {
+function toggleScanner(walletView = "home") {
   if (state.tab === "scan") {
     if (state.scanning || state.connectingScan) return;
     selectTab(state.scanLastTab);
-    $("scan-toggle").focus();
+    if (state.scanLastTab === "wallet") {
+      window.WalletUI?.show(state.scanLastWalletView);
+      $("wallet-show-nostr").focus();
+    }
   } else {
     state.scanLastTab = state.tab;
+    state.scanLastWalletView = typeof walletView === "string" ? walletView : "home";
     selectTab("scan");
     $("scan-screen").focus();
     prepareScanner();
@@ -857,7 +938,7 @@ function toggleScanner() {
 async function connectScannedClient(uri, button) {
   if (state.connectingScan) return;
   if (state.account === null) return toast("Add an account in Settings first.");
-  if (!state.unlocked) return toast("Unlock Byrgi above before connecting.");
+  if (!state.unlocked) return toast("Unlock Cashr above before connecting.");
   state.connectingScan = true;
   button.disabled = true;
   button.textContent = "Connecting…";
@@ -881,7 +962,7 @@ function renderScannedCodes(codes) {
   list.replaceChildren();
   $("scan-input").hidden = codes.length > 0;
   for (const raw of codes) {
-    const result = ByrgiQR.describe(raw);
+    const result = CashrQR.describe(raw);
     const card = el("div", "card stack");
     const title = el("h2", "scan-result-title", result.title);
     const hint = el("p", "hint", result.hint);
@@ -893,8 +974,8 @@ function renderScannedCodes(codes) {
       if (list.children.length === 1) connect.focus();
       continue;
     }
-    if (window.WalletUI && /^(lightning:)?lnbc/i.test(raw.trim())) {
-      const review = el("button", "primary", "Open in Wallet");
+    if (window.WalletUI && ["receive", "pay"].includes(result.action)) {
+      const review = el("button", "primary", result.action === "receive" ? "Review token" : "Review payment");
       review.onclick = () => {
         clearScan();
         selectTab("wallet");
@@ -956,37 +1037,46 @@ async function scanQR(source) {
   }
 }
 
-function selectTab(name) {
+function closeMenu(restoreFocus = false) {
+  state.menuOpen = false;
+  $("main-menu").hidden = true;
+  $("menu-dismiss").hidden = true;
+  $("menu-toggle").setAttribute("aria-expanded", "false");
+  if (restoreFocus) $("menu-toggle").focus();
+}
+
+function toggleMenu() {
+  if (state.menuOpen) return closeMenu(true);
+  state.menuOpen = true;
+  $("main-menu").hidden = false;
+  $("menu-dismiss").hidden = false;
+  $("menu-toggle").setAttribute("aria-expanded", "true");
+  $("nav-wallet").focus();
+}
+
+function selectTab(name, refreshWallet = false) {
+  closeMenu();
+  window.WalletUI?.hideSecrets?.();
   if (state.tab === "scan" && name !== "scan") clearScan();
-  if (state.tab === "settings" && name !== "settings") showAccountForm(false);
+  if (state.tab === "setup" && name !== "setup") showAccountForm(false);
   state.tab = name;
-  for (const tab of document.querySelectorAll(".tab")) {
+  for (const tab of document.querySelectorAll("[data-tab]")) {
     const selected = tab.dataset.tab === name;
     tab.classList.toggle("is-active", selected);
-    tab.setAttribute("aria-selected", String(selected));
-    tab.tabIndex = selected || (["scan", "settings"].includes(name) && tab.dataset.tab === "home") ? 0 : -1;
+    tab.setAttribute("aria-current", selected ? "page" : "false");
   }
   for (const panel of document.querySelectorAll(".panel")) {
     panel.classList.toggle("is-active", panel.id === `tab-${name}`);
   }
-  // Settings is reached by the gear, so no tab lights up while it is open and
-  // the gear has to say where you are instead.
   $("settings-toggle").setAttribute("aria-pressed", String(name === "settings"));
-  $("scan-toggle").setAttribute("aria-pressed", String(name === "scan"));
   $("scroll").scrollTop = 0;
-}
-
-/// The gear is a toggle, not a fifth tab.
-///
-/// Settings is somewhere you go and come back from, so closing it returns to
-/// the tab you were reading rather than to whichever one is first.
-function toggleSettings() {
-  if (state.tab === "settings") {
-    selectTab(state.lastTab);
-    return;
+  $("page-back").hidden = name === "wallet";
+  renderUnlock();
+  if (name === "wallet") {
+    window.WalletUI?.show("home");
+    window.WalletUI?.open(refreshWallet);
   }
-  state.lastTab = state.tab;
-  selectTab("settings");
+  if (name === 'settings') renderLightningAddress();
 }
 
 async function refreshAll() {
@@ -999,17 +1089,39 @@ async function refreshAll() {
 }
 
 function wire() {
-  window.WalletUI?.init(call);
+  $('account-rename').onsubmit = saveRename;
+  $('account-rename-cancel').onclick = closeRename;
+  $('recovery-visibility').onclick = () => setRecoveryVisible($('recovery-visibility').getAttribute('aria-pressed') !== 'true');
+  window.addEventListener('blur', () => setRecoveryVisible(false));
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) setRecoveryVisible(false);
+  });
+  $('recovery-count').onchange = () => setRecoveryCount(Number($('recovery-count').value));
+  recoveryFields(24).forEach((field, index) => {
+    field.onpaste = event => pasteRecoveryWords(event, index);
+    field.onkeydown = event => {
+      if (event.key === ' ' && field.value.trim()) {
+        event.preventDefault();
+        recoveryFields()[Math.min(index + 1, recoveryFields().length - 1)].focus();
+      }
+    };
+    field.oninput = () => { $('account-error').textContent = ''; };
+  });
+  window.WalletUI?.init((command, args) => call(command, args, { notifyError: false }));
   $("lightning-form").onsubmit = (event) => {
     event.preventDefault();
     saveLightningAddress();
   };
   $("lightning-address").oninput = () => {
+    state.lightningLookupRevision++;
+    state.findingLightning = false;
     state.lightningDirty = true;
     $("lightning-status").textContent = "";
+    renderLightningAddress();
   };
+  $('lightning-find').onclick = findLightningAddress;
   $("lightning-remove").onclick = () => saveLightningAddress(true);
-  $("scan-toggle").onclick = toggleScanner;
+  for (const view of ["receive", "send", "nostr"]) $("wallet-scan-" + view).onclick = () => toggleScanner(view);
   $("scan-screen").onclick = () => scanQR("screen");
   $("scan-clipboard").onclick = () => scanQR("clipboard");
   document.addEventListener("paste", (event) => {
@@ -1017,20 +1129,34 @@ function wire() {
     event.preventDefault();
     scanQR("clipboard");
   });
-  for (const tab of document.querySelectorAll(".tab")) {
+  $("menu-toggle").onclick = toggleMenu;
+  $("menu-dismiss").onclick = () => closeMenu(true);
+  $("page-back").onclick = () => selectTab("wallet");
+  for (const tab of document.querySelectorAll("[data-tab]")) {
     tab.onclick = () => selectTab(tab.dataset.tab);
-    tab.onkeydown = (event) => {
-      const tabs = [...document.querySelectorAll(".tab")];
-      const index = tabs.indexOf(tab);
-      const next = { ArrowRight: (index + 1) % tabs.length, ArrowLeft: (index + tabs.length - 1) % tabs.length, Home: 0, End: tabs.length - 1 }[event.key];
+  }
+  const menuButtons = [$("nav-wallet"), $("nav-home"), $("nav-clients"), $("settings-toggle")];
+  for (const [index, button] of menuButtons.entries()) {
+    button.onkeydown = event => {
+      const next = { ArrowRight: (index + 1) % 4, ArrowLeft: (index + 3) % 4, ArrowDown: (index + 2) % 4, ArrowUp: (index + 2) % 4, Home: 0, End: 3 }[event.key];
       if (next === undefined) return;
       event.preventDefault();
-      selectTab(tabs[next].dataset.tab);
-      tabs[next].focus();
+      menuButtons[next].focus();
+    };
+  }
+  document.addEventListener("focusin", event => {
+    if (state.menuOpen && !$("main-menu").contains(event.target) && event.target !== $("menu-toggle")) closeMenu();
+  });
+  for (const view of ["mint", "backup"]) {
+    $("settings-" + view).onclick = () => {
+      selectTab("wallet");
+      window.WalletUI?.show(view);
     };
   }
 
-  $("settings-toggle").onclick = () => toggleSettings();
+  $("settings-import").onclick = () => startWalletSetup(true);
+  $("wallet-create").onclick = () => startWalletSetup(false);
+  $("wallet-import").onclick = () => startWalletSetup(true);
 
   $("account-picker").onchange = async (event) => {
     state.account = Number(event.target.value);
@@ -1049,23 +1175,15 @@ function wire() {
       unlockWithTouchId();
       return;
     }
-    $("unlock-passphrase").focus();
+    startWalletSetup(true, state.account);
   };
 
   $("unlock-touch-id").onclick = () => unlockWithTouchId();
 
-  $("unlock-form").onsubmit = (event) => {
-    event.preventDefault();
-    submitUnlock();
-  };
+  $("unlock-recover").onclick = () => startWalletSetup(true, state.account);
 
   arm($("forget-keychain"), "Delete the Keychain copies", async () => {
     await call("forget_keychain");
-    await refreshAll();
-  });
-
-  arm($("forget-touch-id"), "Stop unlocking with Touch ID", async () => {
-    await call("forget_touch_id");
     await refreshAll();
   });
 
@@ -1076,26 +1194,27 @@ function wire() {
     syncPinned();
   };
 
-  $("close").onclick = () => {
-    clearScan();
-    invoke("hide_window").catch(() => {});
-  };
-
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.menuOpen) {
+      event.preventDefault();
+      closeMenu(true);
+      return;
+    }
     if (event.key === "Escape" && state.tab === "scan") {
       event.preventDefault();
       toggleScanner();
       return;
     }
     if (event.key === "Escape" && !state.pinned) {
+      window.WalletUI?.hideSecrets?.();
       invoke("hide_window").catch(() => {});
     }
   });
 
-  $("account-add").onclick = () => showAccountForm($("account-new").hidden);
+  $("account-add").onclick = () => startWalletSetup(false);
   $("account-cancel").onclick = () => {
     showAccountForm(false);
-    $("account-add").focus();
+    selectTab('wallet');
   };
   $("account-create").onclick = () => saveAccount(false);
   $("account-import").onclick = () => saveAccount(true);

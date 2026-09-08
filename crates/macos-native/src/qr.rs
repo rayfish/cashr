@@ -14,7 +14,7 @@ mod platform {
 
     const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 
-    /// Called on the app's main thread so permission is attributed to Byrgi.
+    /// Called on the app's main thread so permission is attributed to Cashr.
     pub fn request_screen_access() -> bool {
         CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
     }
@@ -23,7 +23,7 @@ mod platform {
         if CGPreflightScreenCaptureAccess() {
             Ok(())
         } else {
-            Err("Allow Byrgi in System Settings → Privacy & Security → Screen Recording, then reopen Byrgi. You can also scan an image from the clipboard.".into())
+            Err("Allow Cashr in System Settings → Privacy & Security → Screen Recording, then reopen Cashr. You can also scan an image from the clipboard.".into())
         }
     }
 
@@ -61,7 +61,7 @@ mod platform {
             return Ok(None);
         }
         if !status.success() {
-            return Err("Screen capture failed. Check Byrgi's Screen Recording permission or try Paste image.".into());
+            return Err("Screen capture failed. Check Cashr's Screen Recording permission or try Paste image.".into());
         }
         let size = std::fs::metadata(&path)
             .map_err(|_| "Could not read the selected image.")?

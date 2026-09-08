@@ -39,7 +39,7 @@ pub fn unlock_passphrase(app: &AppHandle) -> Result<PathBuf> {
     Ok(dir.join("unlock.passphrase"))
 }
 
-/// `~/Library/Logs/Byrgi/byrgi.log`.
+/// `~/Library/Logs/Cashr/cashr.log`.
 ///
 /// Worked out from the home directory rather than asked of Tauri, because
 /// logging starts before there is an app to ask. A bundled app has nowhere to
@@ -48,7 +48,7 @@ pub fn unlock_passphrase(app: &AppHandle) -> Result<PathBuf> {
 /// registering.
 pub fn log() -> Result<PathBuf> {
     let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("no home directory"))?;
-    let dir = PathBuf::from(home).join("Library/Logs/Byrgi");
+    let dir = PathBuf::from(home).join("Library/Logs/Cashr");
     std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("byrgi.log"))
+    Ok(dir.join("cashr.log"))
 }

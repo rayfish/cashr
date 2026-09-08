@@ -3,169 +3,201 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Byrgi</title>
+    <title>Cashr</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <header class="bar">
       <span class="brand">
-        <svg class="brand-mark" viewBox="0 0 36 36" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M7.4 27.5V18a10.6 10.6 0 0 1 21.2 0v9.5M4.5 28.6h27M13.6 17.8h8.8" /></svg>
-        <span class="brand-account"><span class="brand-name">Byrgi <span id="lock-dot" class="dot"></span></span><select id="account-picker" class="picker" title="Active account" aria-label="Active account"></select></span>
+        <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#wallet-minimal" /></svg>
+        <span class="brand-account"><span class="brand-name">Cashr <span id="lock-dot" class="dot"></span></span><select id="account-picker" class="picker" title="Active account" aria-label="Active account"></select></span>
       </span>
-      <button id="lock-toggle" class="icon" title="Unlock">Unlock</button>
-      <button id="scan-toggle" class="icon" title="Scan a QR code" aria-label="Scan a QR code" aria-pressed="false"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 7h3v3H7zm7 0h3v3h-3zM7 14h3v3H7zm7 0h3v3h-3z" /></svg></button>
-      <button id="settings-toggle" class="icon" title="Settings" aria-label="Settings" aria-pressed="false">
-        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path
-            d="M9.23 5.30 10.37 4.94 10.51 2.62 13.49 2.62 13.63 4.94 14.77 5.30 15.84 5.85 17.58 4.31 19.69 6.42 18.15 8.16 18.70 9.23 19.06 10.37 21.38 10.51 21.38 13.49 19.06 13.63 18.70 14.77 18.15 15.84 19.69 17.58 17.58 19.69 15.84 18.15 14.77 18.70 13.63 19.06 13.49 21.38 10.51 21.38 10.37 19.06 9.23 18.70 8.16 18.15 6.42 19.69 4.31 17.58 5.85 15.84 5.30 14.77 4.94 13.63 2.62 13.49 2.62 10.51 4.94 10.37 5.30 9.23 5.85 8.16 4.31 6.42 6.42 4.31 8.16 5.85Z"
-          />
-          <circle cx="12" cy="12" r="3.25" />
-        </svg>
+      <button id="pin-toggle" class="icon header-pin" title="Keep the window open" aria-label="Keep the window open" aria-pressed="false">
+        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#pin" /></svg>
       </button>
-      <button id="pin-toggle" class="icon" title="Keep the window open" aria-label="Keep the window open" aria-pressed="false">
-        <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 3 8 0-1 7 3 3v2H6v-2l3-3-1-7ZM12 15v6" /></svg>
-      </button>
-      <button id="close" class="icon" title="Close" aria-label="Close window">&times;</button>
+      <button id="menu-toggle" class="menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="main-menu"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#ellipsis" /></svg></button>
     </header>
 
     <section id="prompts" class="prompts" hidden></section>
 
     <section id="unlock" class="unlock" hidden>
       <div id="unlock-title" class="unlock-title"></div>
-      <div id="unlock-hint" class="empty"></div>
       <button id="unlock-touch-id" class="primary wide" type="button" hidden>
-        Unlock with Touch ID
+        Unlock wallet
       </button>
-      <form id="unlock-form" class="row">
-        <input
-          id="unlock-passphrase"
-          type="password"
-          placeholder="Passphrase"
-          aria-label="Passphrase"
-          autocomplete="current-password"
-        />
-        <button id="unlock-go" class="primary" type="submit">Unlock</button>
-      </form>
-      <label id="unlock-remember-row" class="check" hidden>
-        <input id="unlock-remember" type="checkbox" />
-        Unlock with Touch ID next time
-      </label>
-      <p id="unlock-remember-hint" class="hint" hidden>
-        Saves this passphrase on your Mac so Touch ID can open your keys.
-        Anything that can read your files could open them too.
-      </p>
+      <button id="unlock-recover" type="button" class="ghost">Recover with recovery words</button>
       <div id="unlock-error" class="empty" hidden></div>
     </section>
 
     <section id="keychain-leftover" class="unlock" hidden>
       <div class="empty">
-        Your keys are in encrypted files now. The old Keychain copies are still
-        there, in the clear.
+        Old unencrypted Keychain copies remain.
       </div>
       <button id="forget-keychain" class="danger">Delete the Keychain copies</button>
     </section>
 
-    <nav class="tabs" role="tablist" aria-label="Main navigation">
-      <button id="nav-home" class="tab is-active" data-tab="home" role="tab" aria-controls="tab-home" aria-selected="true">Account</button>
-      <button id="nav-wallet" class="tab" data-tab="wallet" role="tab" aria-controls="tab-wallet" aria-selected="false" tabindex="-1">Wallet</button>
-      <button id="nav-clients" class="tab" data-tab="clients" role="tab" aria-controls="tab-clients" aria-selected="false" tabindex="-1">Clients</button>
-      <button id="nav-rules" class="tab" data-tab="rules" role="tab" aria-controls="tab-rules" aria-selected="false" tabindex="-1">Rules</button>
-      <button id="nav-activity" class="tab" data-tab="activity" role="tab" aria-controls="tab-activity" aria-selected="false" tabindex="-1">Activity</button>
+    <button id="menu-dismiss" class="menu-dismiss" aria-label="Close menu" hidden></button>
+    <nav id="main-menu" class="main-menu" aria-label="Main navigation" hidden>
+      <button id="nav-wallet" data-tab="wallet" aria-current="page"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#wallet-minimal" /></svg>Wallet</button>
+      <button id="nav-home" data-tab="home"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#user-round" /></svg>Identity</button>
+      <button id="nav-clients" data-tab="clients"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#panels-top-left" /></svg>Nostr</button>
+      <button id="settings-toggle" data-tab="settings"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#settings" /></svg>Settings</button>
     </nav>
 
     <main id="scroll">
-      <section id="tab-wallet" class="panel" role="tabpanel" aria-labelledby="nav-wallet" tabindex="0">
-        <div class="settings-heading"><h1 id="wallet-heading">Wallet</h1><button id="wallet-refresh">Refresh</button></div>
-        <p id="wallet-account" class="hint"></p>
-        <select id="wallet-picker" aria-label="Cashu wallet" hidden></select>
-        <div class="card stack wallet-overview">
-          <span class="eyebrow">Available balance</span>
+      <button id="page-back" class="back" hidden><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#arrow-left" /></svg> Wallet</button>
+      <section id="tab-wallet" class="panel is-active" role="region" aria-labelledby="nav-wallet" tabindex="0">
+        <div id="wallet-welcome" class="wallet-welcome" hidden>
+          <h1>Set up wallet</h1>
+          <button id="wallet-create" class="primary" type="button">Create wallet</button>
+          <button id="wallet-import" type="button">Import wallet</button>
+        </div>
+        <div class="wallet-heading"><h1 id="wallet-heading" class="sr-only">Cashu wallet</h1><button id="wallet-refresh" class="icon" aria-label="Refresh wallet" title="Refresh wallet"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#refresh-cw" /></svg></button></div>
+        <p id="wallet-account" class="sr-only"></p>
+        <div id="wallet-overview" class="card stack wallet-overview">
+          <button id="wallet-choose-mint" class="mint-choice" type="button"><span id="wallet-choose-mint-label">Minibits</span><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#chevron-down" /></svg></button>
           <strong id="wallet-balance" class="wallet-balance">— sats</strong>
           <span id="wallet-pending" class="hint"></span>
-          <p id="wallet-mint" class="hint">Mint: btc.aleafnd.org/cashu</p>
+          <p id="wallet-mint" class="sr-only">Mint: mint.minibits.cash/Bitcoin</p>
           <button id="wallet-open" class="primary">Open wallet</button>
         </div>
-        <p id="wallet-status" class="hint" role="status" aria-live="polite">Unlock your account to open its wallet.</p>
-        <details id="wallet-import-section" class="card stack"><summary>Import wallet</summary>
-          <form id="wallet-import-form" class="stack">
-            <label for="wallet-import-seed">Seed phrase (BIP-39)</label>
-            <input id="wallet-import-seed" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="12 or 24 words" required maxlength="512" />
-            <label for="wallet-import-mint">Original mint URL</label>
-            <input id="wallet-import-mint" type="url" value="https://btc.aleafnd.org/cashu" required maxlength="2048" />
-            <label for="wallet-import-passphrase">Recovery passphrase (optional)</label>
-            <input id="wallet-import-passphrase" type="password" autocomplete="off" maxlength="1024" />
-            <button type="submit">Import and recover</button>
+        <p id="wallet-status" class="hint wallet-status" role="status" aria-live="polite"></p>
+        <button id="wallet-flow-back" class="back" hidden><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#arrow-left" /></svg> Wallet</button>
+        <section id="wallet-mint-section" class="card stack wallet-flow" data-wallet-view="mint" hidden><h2 class="wallet-flow-heading">Choose mint</h2>
+          <select id="wallet-picker" aria-label="Saved wallet and mint" hidden></select>
+          <form id="wallet-mint-form" class="stack">
+            <label for="wallet-mint-url">Mint URL</label>
+            <input id="wallet-mint-url" type="url" value="https://mint.minibits.cash/Bitcoin" required maxlength="2048" autocapitalize="off" spellcheck="false" />
+
+            <div class="split"><button id="wallet-mint-default" type="button">Use Minibits</button><button type="submit" class="primary">Choose mint</button></div>
           </form>
-        </details>
+        </section>
+        <div id="wallet-shortcuts" class="wallet-shortcuts"><button id="wallet-show-receive"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#arrow-down-left" /></svg><span>Receive</span></button><button id="wallet-show-send"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#arrow-up-right" /></svg><span>Send</span></button><button id="wallet-show-zap"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#zap" /></svg><span>Zap</span></button><button id="wallet-show-nostr"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#plug-zap" /></svg><span>Nostr</span></button></div>
         <div id="wallet-actions" hidden>
-          <details class="card stack"><summary>Add funds</summary>
+
+          <section class="card stack wallet-flow" data-wallet-view="receive" hidden><h2 class="wallet-flow-heading">Add funds</h2>
             <form id="wallet-fund-form" class="stack">
               <label for="wallet-fund-amount">Amount in sats</label>
               <input id="wallet-fund-amount" type="number" min="1" max="10000" step="1" value="1000" required />
               <button type="submit">Create funding invoice</button>
             </form>
             <div id="wallet-invoice-box" class="stack" hidden>
+              <canvas id="wallet-invoice-qr" class="qr-code" aria-label="Funding invoice QR code" hidden></canvas>
+              <p id="wallet-invoice-qr-error" class="hint"></p>
               <textarea id="wallet-invoice" readonly aria-label="Funding invoice"></textarea>
               <button id="wallet-copy-invoice">Copy invoice</button>
-              <p class="hint">Pay this invoice with another Lightning wallet, then Refresh to claim your Cashu balance.</p>
+              <p class="hint">Refresh after paying.</p>
             </div>
-          </details>
-          <details class="card stack"><summary>Receive Cashu</summary>
+          </section>
+          <section class="card stack wallet-flow" data-wallet-view="receive" hidden><h2 class="wallet-flow-heading">Receive Cashu</h2>
+            <button id="wallet-scan-receive" class="wallet-scan" type="button"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#scan" /></svg> Scan token QR</button>
             <form id="wallet-receive-form" class="stack">
               <label for="wallet-token">Cashu token from this mint</label>
               <textarea id="wallet-token" placeholder="cashuB…" required spellcheck="false"></textarea>
+              <p id="wallet-token-info" class="hint"></p>
               <button type="submit">Receive token</button>
             </form>
-          </details>
-          <details class="card stack" id="wallet-pay-section"><summary>Pay Lightning invoice</summary>
+          </section>
+          <section class="card stack wallet-flow" data-wallet-view="send" hidden><h2 class="wallet-flow-heading">Send Cashu</h2>
+            <form id="wallet-send-form" class="stack">
+              <label for="wallet-send-amount">Amount in sats</label>
+              <input id="wallet-send-amount" type="number" min="1" max="10000" step="1" value="100" required />
+              <button type="submit">Review token</button>
+            </form>
+
+          </section>
+          <section class="card stack wallet-flow" data-wallet-view="send" id="wallet-pay-section" hidden><h2 class="wallet-flow-heading">Pay Lightning invoice</h2>
+            <button id="wallet-scan-send" class="wallet-scan" type="button"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#scan" /></svg> Scan invoice QR</button>
             <form id="wallet-pay-form" class="stack">
               <label for="wallet-request">Invoice</label>
               <textarea id="wallet-request" placeholder="lnbc…" required spellcheck="false"></textarea>
               <button type="submit">Review payment</button>
             </form>
-          </details>
-          <details class="card stack"><summary>Zap a Nostr account or note</summary>
+          </section>
+          <section class="card stack wallet-flow" data-wallet-view="zap" hidden><h2 class="wallet-flow-heading">Zap a Nostr account or note</h2>
             <form id="wallet-zap-form" class="stack">
               <label for="wallet-zap-address">Recipient’s Lightning address</label><input id="wallet-zap-address" placeholder="alice@example.com" required />
               <label for="wallet-zap-recipient">Recipient’s Nostr public key</label><input id="wallet-zap-recipient" placeholder="npub1…" required />
               <label for="wallet-zap-amount">Amount in sats</label><input id="wallet-zap-amount" type="number" min="1" max="10000" step="1" value="21" required />
               <label for="wallet-zap-note">Note event ID (optional, hex)</label><input id="wallet-zap-note" />
-              <p class="hint">Signs a zap request and asks the recipient’s provider for an invoice. You review and approve the payment next.</p>
+
               <button type="submit">Prepare zap</button>
             </form>
-          </details>
+          </section>
           <div id="wallet-review" class="card stack" hidden>
             <h2>Confirm payment</h2><p id="wallet-destination" class="mono"></p>
             <p id="wallet-review-amount"></p><p id="wallet-review-fee" class="hint"></p>
             <div class="row"><button id="wallet-confirm" class="primary">Pay</button><button id="wallet-cancel">Cancel</button></div>
           </div>
-          <h2>Recent transactions</h2><div id="wallet-history" class="list"></div>
-          <details class="card stack"><summary>Backup and recovery</summary>
-            <button id="wallet-restore">Recover tokens from mint</button>
-          </details>
+          <div id="wallet-recent"><div id="wallet-pending-tokens" class="stack" hidden></div><h2>Recent</h2><div id="wallet-history" class="list"></div></div>
         </div>
+        <section class="card stack wallet-flow" data-wallet-view="nostr" aria-labelledby="wallet-nostr-heading" hidden>
+          <h2 id="wallet-nostr-heading" class="wallet-flow-heading">Connect a Nostr app</h2>
+
+          <div class="connection-actions">
+          <button id="wallet-scan-nostr" type="button"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#scan" /></svg> Scan QR</button>
+          <button id="wallet-nostr-code" type="button"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#qr-code" /></svg> Show my QR</button>
+          <button id="wallet-nostr-copy" type="button"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#copy" /></svg> Copy bunker URL</button>
+          </div>
+          <form id="wallet-nostr-connect-form" class="stack connection-paste">
+            <label for="wallet-nostr-connect-uri">Paste a connection link</label>
+            <textarea id="wallet-nostr-connect-uri" placeholder="nostrconnect://…" maxlength="8192" autocomplete="off" autocapitalize="off" spellcheck="false" required></textarea>
+            <button type="submit" class="primary">Connect</button>
+          </form>
+          <div id="wallet-nostr-qr-box" class="stack" hidden>
+            <canvas id="wallet-nostr-qr" class="qr-code" aria-label="Nostr connection QR code" hidden></canvas>
+            <p id="wallet-nostr-qr-error" class="hint"></p>
+            <textarea id="wallet-nostr-uri" readonly aria-label="Nostr connection link"></textarea>
+            <p class="hint">Expires in 5 minutes.</p>
+          </div>
+        </section>
+        <section class="card stack wallet-flow" data-wallet-view="token" hidden><h2 class="wallet-flow-heading">Share Cashu token</h2>
+          <p id="wallet-share-amount"></p>
+          <canvas id="wallet-share-qr" class="qr-code" aria-label="Cashu token QR code" hidden></canvas>
+          <p id="wallet-share-qr-error" class="hint"></p>
+          <textarea id="wallet-share-token" readonly aria-label="Cashu token"></textarea>
+          <button id="wallet-share-copy" type="button">Copy token</button>
+          <p class="hint">Anyone with this token can spend it.</p>
+          <button id="wallet-share-hide" type="button">Hide token</button>
+          <button id="wallet-share-reclaim" type="button">Reclaim unspent token</button>
+        </section>
+        <section class="card stack wallet-flow" data-wallet-view="backup" hidden><h2 class="wallet-flow-heading">Backup and recovery</h2>
+          <p class="hint">Keep your recovery words private.</p>
+          <button id="wallet-backup-show">Show recovery phrase</button>
+          <div id="wallet-backup-words" hidden>
+            <ol id="wallet-words" class="recovery-words" aria-label="Wallet recovery words"></ol>
+            <p id="wallet-backup-mints" class="hint"></p>
+            <p id="wallet-backup-passphrase" class="hint" hidden>Original BIP-39 passphrase also required.</p>
+            <button id="wallet-backup-hide">Hide words</button>
+          </div>
+          <div id="wallet-backup-unavailable" hidden>
+            <p class="hint">Recovery phrase unavailable.</p>
+          </div>
+          <p class="hint">Seed recovery may miss pending payments. Back up your database too.</p>
+          <button id="wallet-restore">Recover tokens from mint</button>
+        </section>
       </section>
       <section id="tab-scan" class="panel" aria-labelledby="scan-heading">
         <div class="settings-heading">
           <h1 id="scan-heading">Scan QR code</h1>
         </div>
         <div id="scan-input">
-        <p class="hint">Select a QR code on your screen, or copy an image and paste it here. Images are decoded on your Mac.</p>
+
         <div class="split">
           <button id="scan-screen" class="primary">Select screen area</button>
           <button id="scan-clipboard">Paste image</button>
         </div>
-        <p class="hint">Screen selection needs Screen Recording permission. Press Esc to cancel the selection. You can also use ⌘V here to scan a copied image.</p>
+
         </div>
         <p id="scan-status" class="hint" role="status" aria-live="polite"></p>
         <div id="scan-results" class="list"></div>
       </section>
-      <section id="tab-home" class="panel is-active" role="tabpanel" aria-labelledby="nav-home" tabindex="0">
+      <section id="tab-home" class="panel" role="region" aria-labelledby="nav-home" tabindex="0">
         <div id="account-card" class="card stack"></div>
 
         <section class="pair-section" aria-labelledby="pair-heading">
         <h2 id="pair-heading">Connect an app</h2>
-        <p class="hint">Use your identity without sharing your private key.</p>
+
         <div class="split">
           <button id="pair-bunker" class="primary">Copy bunker link</button>
           <button id="pair-paste" title="Paste a nostrconnect URI">Paste client link</button>
@@ -186,27 +218,79 @@
 
       </section>
 
-      <section id="tab-clients" class="panel" role="tabpanel" aria-labelledby="nav-clients" tabindex="0">
-        <div class="page-heading"><h1>Connected apps</h1><p class="hint">Manage the apps that use this identity.</p></div>
+      <section id="tab-clients" class="panel" role="region" aria-labelledby="nav-clients" tabindex="0">
+        <div class="page-heading"><h1>Nostr apps</h1></div>
         <div id="client-list" class="list"></div>
+      <div class="split"><button id="nav-rules" data-tab="rules">Permissions</button><button id="nav-activity" data-tab="activity">Signing activity</button></div>
       </section>
 
-      <section id="tab-rules" class="panel" role="tabpanel" aria-labelledby="nav-rules" tabindex="0">
-        <div class="page-heading"><h1>Permissions</h1><p class="hint">Choose what each app can do without asking.</p></div>
+      <section id="tab-rules" class="panel" role="region" aria-labelledby="rules-heading" tabindex="0">
+        <div class="page-heading"><h1 id="rules-heading">Permissions</h1></div>
         <select id="rule-client" class="picker wide" aria-label="App permissions"></select>
         <div id="rule-list" class="list"></div>
       </section>
 
-      <section id="tab-activity" class="panel" role="tabpanel" aria-labelledby="nav-activity" tabindex="0">
-        <div class="page-heading"><h1>Activity</h1><p class="hint">A history of requests and your decisions.</p></div>
+      <section id="tab-activity" class="panel" role="region" aria-labelledby="activity-heading" tabindex="0">
+        <div class="page-heading"><h1 id="activity-heading">Activity</h1></div>
         <div id="activity-list" class="list"></div>
         <button id="activity-more" class="ghost wide" hidden>Load more</button>
       </section>
 
+      <section id="tab-setup" class="panel" aria-labelledby="setup-heading">
+        <h1 id="setup-heading">Create wallet</h1>
+          <div id="account-new" class="account-form" hidden>
+            <label for="account-label">Account name</label>
+            <input id="account-label" type="text" placeholder="e.g. Personal" autocomplete="off" />
+            <button id="account-create" class="primary">Create wallet · 12 words</button>
+            <div id="account-import-fields" class="import-fields">
+              <div class="recovery-heading"><span id="recovery-label">Recovery words</span><select id="recovery-count" aria-label="Number of recovery words"><option value="12">12 words</option><option value="24">24 words</option></select></div>
+              <div id="recovery-grid" class="recovery-grid" role="group" aria-labelledby="recovery-label">
+                <label class="recovery-word" id="recovery-slot-1"><span aria-hidden="true">1</span><input id="recovery-word-1" type="password" aria-label="Recovery word 1" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-2"><span aria-hidden="true">2</span><input id="recovery-word-2" type="password" aria-label="Recovery word 2" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-3"><span aria-hidden="true">3</span><input id="recovery-word-3" type="password" aria-label="Recovery word 3" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-4"><span aria-hidden="true">4</span><input id="recovery-word-4" type="password" aria-label="Recovery word 4" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-5"><span aria-hidden="true">5</span><input id="recovery-word-5" type="password" aria-label="Recovery word 5" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-6"><span aria-hidden="true">6</span><input id="recovery-word-6" type="password" aria-label="Recovery word 6" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-7"><span aria-hidden="true">7</span><input id="recovery-word-7" type="password" aria-label="Recovery word 7" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-8"><span aria-hidden="true">8</span><input id="recovery-word-8" type="password" aria-label="Recovery word 8" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-9"><span aria-hidden="true">9</span><input id="recovery-word-9" type="password" aria-label="Recovery word 9" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-10"><span aria-hidden="true">10</span><input id="recovery-word-10" type="password" aria-label="Recovery word 10" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-11"><span aria-hidden="true">11</span><input id="recovery-word-11" type="password" aria-label="Recovery word 11" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-12"><span aria-hidden="true">12</span><input id="recovery-word-12" type="password" aria-label="Recovery word 12" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-13" hidden><span aria-hidden="true">13</span><input id="recovery-word-13" type="password" aria-label="Recovery word 13" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-14" hidden><span aria-hidden="true">14</span><input id="recovery-word-14" type="password" aria-label="Recovery word 14" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-15" hidden><span aria-hidden="true">15</span><input id="recovery-word-15" type="password" aria-label="Recovery word 15" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-16" hidden><span aria-hidden="true">16</span><input id="recovery-word-16" type="password" aria-label="Recovery word 16" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-17" hidden><span aria-hidden="true">17</span><input id="recovery-word-17" type="password" aria-label="Recovery word 17" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-18" hidden><span aria-hidden="true">18</span><input id="recovery-word-18" type="password" aria-label="Recovery word 18" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-19" hidden><span aria-hidden="true">19</span><input id="recovery-word-19" type="password" aria-label="Recovery word 19" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-20" hidden><span aria-hidden="true">20</span><input id="recovery-word-20" type="password" aria-label="Recovery word 20" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-21" hidden><span aria-hidden="true">21</span><input id="recovery-word-21" type="password" aria-label="Recovery word 21" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-22" hidden><span aria-hidden="true">22</span><input id="recovery-word-22" type="password" aria-label="Recovery word 22" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-23" hidden><span aria-hidden="true">23</span><input id="recovery-word-23" type="password" aria-label="Recovery word 23" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+                <label class="recovery-word" id="recovery-slot-24" hidden><span aria-hidden="true">24</span><input id="recovery-word-24" type="password" aria-label="Recovery word 24" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" /></label>
+              </div>
+
+              <button id="recovery-visibility" type="button" class="ghost start" aria-pressed="false" aria-controls="recovery-grid">Show words</button>
+              <label for="account-mint">Original mint URL</label>
+              <input id="account-mint" type="url" value="https://mint.minibits.cash/Bitcoin" maxlength="2048" autocomplete="off" autocapitalize="off" spellcheck="false" />
+              <label for="account-recovery-passphrase">BIP-39 passphrase (optional)</label>
+              <input id="account-recovery-passphrase" type="password" autocomplete="off" maxlength="1024" />
+              <button id="account-import">Import wallet</button>
+              <p id="account-reconnect-hint" class="hint" hidden>Nostr apps may need reconnecting.</p>
+            </div>
+            <p id="account-error" class="hint" role="status" aria-live="polite"></p>
+            <button id="account-cancel" class="ghost start">Cancel</button>
+          </div>
+      </section>
       <section id="tab-settings" class="panel">
         <div class="settings-heading">
           <h1>Settings</h1>
         </div>
+        <div class="settings-tools"><button id="settings-mint">Choose mint</button><button id="settings-import">Restore wallet</button><button id="settings-backup">Backup and recovery</button>
+      <button id="lock-toggle" class="icon" title="Unlock">Unlock</button>
+
+</div>
         <section class="settings-section" aria-labelledby="accounts-heading">
           <div class="settings-heading">
             <h2 id="accounts-heading">Accounts</h2>
@@ -214,59 +298,35 @@
               Add account
             </button>
           </div>
-          <p class="hint">Switch accounts using the menu at the top. New accounts start locked. Unlock opens all accounts; Lock locks them all.</p>
-          <div id="account-list" class="list"></div>
-          <div id="account-new" class="account-form" hidden>
-            <label for="account-label">Account name</label>
-            <input id="account-label" type="text" placeholder="e.g. Personal" autocomplete="off" />
-            <p id="account-locked-hint" class="hint" hidden>Unlock Byrgi above before creating or importing an account.</p>
-            <button id="account-create" class="primary">Create new account</button>
-            <div class="import-fields">
-              <label for="account-secret">Or import an existing private key</label>
-              <input
-                id="account-secret"
-                type="password"
-                placeholder="nsec1… or hex"
-                spellcheck="false"
-                autocomplete="off"
-                autocapitalize="off"
-                aria-describedby="account-key-hint"
-              />
-              <p id="account-key-hint" class="hint">Your key is encrypted with your passphrase and stored on this Mac.</p>
-              <button id="account-import">Import account</button>
+
+          <form id="account-rename" class="card stack" hidden>
+            <label for="account-rename-label">Wallet name</label>
+            <input id="account-rename-label" type="text" maxlength="100" required autocomplete="off" />
+            <div class="buttons">
+              <button id="account-rename-save" type="submit" class="primary">Save</button>
+              <button id="account-rename-cancel" type="button" class="ghost">Cancel</button>
             </div>
-            <button id="account-cancel" class="ghost start">Cancel</button>
-          </div>
+            <p id="account-rename-error" class="hint" role="status"></p>
+          </form>
+          <div id="account-list" class="list"></div>
         </section>
         <section class="settings-section" aria-labelledby="lightning-heading">
           <h2 id="lightning-heading">Lightning address</h2>
-          <p id="lightning-account" class="hint"></p>
+
           <form id="lightning-form" class="card stack">
-            <label for="lightning-address">Use an existing Lightning address</label>
-            <input id="lightning-address" type="text" placeholder="alice@example.com" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="320" aria-describedby="lightning-destination lightning-local" />
-            <p id="lightning-destination" class="hint">Payments to this address go to your existing provider. Its balance and spending access stay with that provider.</p>
-            <p id="lightning-local" class="hint">Saved on this Mac for the selected account. The provider is not checked and your Nostr profile is not updated.</p>
+            <label for="lightning-address" class="sr-only">Lightning address</label>
+            <input id="lightning-address" type="text" placeholder="alice@example.com" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="320" />
+
             <div class="row">
               <button id="lightning-save" type="submit" class="primary">Save address</button>
+              <button id="lightning-find" type="button">Find address</button>
               <button id="lightning-remove" type="button" class="ghost" hidden>Remove</button>
             </div>
             <p id="lightning-status" class="hint" role="status" aria-live="polite"></p>
           </form>
-          <p class="hint">Creating an address on our domain will be available when the receiving service is set up.</p>
+
         </section>
-        <section class="settings-section" aria-labelledby="security-heading">
-          <h2 id="security-heading">Security</h2>
-          <div class="card stack">
-            <div class="card-head">
-              <span class="grow title">Touch ID</span>
-              <span id="touch-id-badge" class="pill"></span>
-            </div>
-            <p id="touch-id-state" class="hint"></p>
-            <button id="forget-touch-id" class="danger start" hidden>
-              Stop unlocking with Touch ID
-            </button>
-          </div>
-        </section>
+
       </section>
     </main>
 

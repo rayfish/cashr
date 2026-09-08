@@ -19,6 +19,34 @@ pub struct NewAccount {
 }
 
 impl Storage {
+    pub fn rename_account(&self, id: AccountId, label: &str) -> Result<()> {
+        let label = label.trim();
+        if label.is_empty() || label.chars().count() > 100 || label.chars().any(char::is_control) {
+            return Err(SignerError::InvalidRequest(
+                "enter a wallet name (1–100 characters)",
+            ));
+        }
+        let changed = self.conn().execute(
+            "UPDATE accounts SET label = ?1 WHERE id = ?2",
+            params![label, id.get()],
+        )?;
+        if changed == 0 {
+            return Err(SignerError::UnknownAccount);
+        }
+        Ok(())
+    }
+
+    pub fn set_signer_public_key(&self, id: AccountId, key: PublicKey) -> Result<()> {
+        let changed = self.conn().execute(
+            "UPDATE accounts SET signer_public_key = ?1 WHERE id = ?2",
+            params![key.to_hex(), id.get()],
+        )?;
+        if changed == 0 {
+            return Err(SignerError::UnknownAccount);
+        }
+        Ok(())
+    }
+
     pub fn insert_account(&self, new: NewAccount) -> Result<Account> {
         let created_at = Timestamp::now();
         let mut conn = self.conn();

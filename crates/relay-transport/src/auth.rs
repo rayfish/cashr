@@ -186,7 +186,7 @@ impl RelaySession {
                 vec![ClientMessage::auth(event)]
             }
             Err(SignerError::Locked) => {
-                self.auth_error = Some("unlock Byrgi to authenticate with this relay".into());
+                self.auth_error = Some("unlock Cashr to authenticate with this relay".into());
                 Vec::new()
             }
             Err(error) => {
@@ -334,7 +334,7 @@ mod tests {
         session.receive(RelayMessage::auth("challenge"));
         assert!(session.tick(|_| Err(SignerError::Locked)).is_empty());
         assert_eq!(session.attempts, 0);
-        assert!(session.error().unwrap().contains("unlock Byrgi"));
+        assert!(session.error().unwrap().contains("unlock Cashr"));
         let auth = authenticate(&mut session, "challenge");
         session.receive(ack(auth.id, true, ""));
         assert!(session.error().is_none());

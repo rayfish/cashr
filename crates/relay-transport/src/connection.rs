@@ -362,7 +362,7 @@ mod tests {
                 .last_error
                 .as_ref()
                 .unwrap()
-                .contains("unlock Byrgi"));
+                .contains("unlock Cashr"));
             vault.unlock(&keys, &[account]).await.unwrap();
             finish_wait.recv().await.unwrap();
             assert!(health.lock().unwrap().last_error.is_none());

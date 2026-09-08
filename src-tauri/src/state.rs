@@ -1,6 +1,7 @@
 //! What the app holds while it runs.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -110,6 +111,7 @@ pub struct AppState {
     keychain: Arc<KeychainKeyStore>,
     /// The passphrase behind Touch ID, when the user has asked for that.
     passphrases: Arc<PassphraseStore>,
+    auth_epoch: AtomicU64,
     pub window: WindowState,
 }
 
@@ -160,6 +162,7 @@ impl AppState {
             keystore,
             keychain,
             passphrases,
+            auth_epoch: AtomicU64::new(0),
             window: WindowState::default(),
         })
     }
@@ -209,43 +212,85 @@ impl AppState {
             .any(|account| self.keychain.holds(account.id).unwrap_or(false))
     }
 
-    /// Unlock with a typed passphrase, and keep it for Touch ID if asked.
-    pub async fn unlock(&self, passphrase: &str, remember: bool) -> Result<()> {
-        self.unlock_with(passphrase).await?;
-
-        // Only after the unlock worked. Storing a passphrase that opens
-        // nothing would set up a Touch ID that fails every time, and the user
-        // would have no way to tell that from the sensor being at fault.
-        if remember {
-            if let Err(error) = self.passphrases.store(passphrase) {
-                // The unlock stands. Touch ID is a convenience, and losing it
-                // is not a reason to refuse an unlock that has already worked.
-                tracing::warn!("could not store the passphrase for Touch ID: {error}");
-            }
-        }
+    /// macOS authentication gates both first setup and recovery of local access.
+    pub(crate) async fn prepare_touch_id(&self) -> Result<()> {
+        let _dialog = self.window.hold_for_dialog();
+        let epoch = self.auth_epoch.load(Ordering::SeqCst);
+        let secret = self.passphrases.load_or_create().await?;
+        anyhow::ensure!(
+            epoch == self.auth_epoch.load(Ordering::SeqCst),
+            "Unlock cancelled."
+        );
+        self.keystore.set_passphrase(secret.expose_secret());
         Ok(())
     }
 
-    /// Unlock with the passphrase kept behind Touch ID.
-    ///
-    /// A stored passphrase that no longer opens the files is deleted rather
-    /// than left to fail again tomorrow. It cannot be repaired from here, and
-    /// the passphrase box behind it still works.
-    pub async fn unlock_with_touch_id(&self) -> Result<()> {
-        let passphrase = self.passphrases.load().await?;
-        match self.unlock_with(passphrase.expose_secret()).await {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                tracing::warn!("the stored passphrase did not unlock; forgetting it");
-                let _ = self.passphrases.forget();
-                Err(error)
-            }
+    pub async fn unlock_with_touch_id(&self, account: Option<AccountId>) -> Result<()> {
+        let _dialog = self.window.hold_for_dialog();
+        let epoch = self.auth_epoch.load(Ordering::SeqCst);
+        if !self.passphrases.is_set() {
+            anyhow::bail!("Recover this wallet with your recovery words to enable Touch ID.");
         }
+        let secret = self.passphrases.load().await?;
+        anyhow::ensure!(
+            epoch == self.auth_epoch.load(Ordering::SeqCst),
+            "Unlock cancelled."
+        );
+        let result = self.unlock_with(secret.expose_secret(), account).await;
+        if epoch != self.auth_epoch.load(Ordering::SeqCst) {
+            self.lock();
+            anyhow::bail!("Unlock cancelled.");
+        }
+        result
     }
 
-    /// Stop offering Touch ID and delete the stored passphrase.
-    pub fn forget_touch_id(&self) -> Result<()> {
-        self.passphrases.forget()?;
+    /// The phrase proves the wallet identity. Only inaccessible local keys
+    /// are replaced; the Cashu database and its encryption material stay put.
+    pub(crate) async fn restore_account_keys(
+        &self,
+        account: &Account,
+        identity: &Keys,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            identity.public_key() == account.identity_public_key,
+            "recovery identity mismatch"
+        );
+        let handles = [
+            KeyHandle::new(account.id, KeyRole::Identity),
+            KeyHandle::new(account.id, KeyRole::Transport),
+        ];
+        if let Ok(keys) = self.keystore.load_many(&handles).await {
+            anyhow::ensure!(
+                keys[0].public_key() == account.identity_public_key,
+                "stored identity mismatch"
+            );
+            self.storage
+                .set_signer_public_key(account.id, keys[1].public_key())?;
+            return Ok(());
+        }
+        let backup = if self.keystore.holds(account.id) {
+            Some(self.keystore.recovery_backup(account.id)?)
+        } else {
+            None
+        };
+        let transport = Keys::generate();
+        let keys = AccountKeys {
+            identity: identity.secret_key().clone(),
+            transport: transport.secret_key().clone(),
+        };
+        self.keystore.store(account.id, &keys).await?;
+        let checked = self.keystore.load_many(&handles).await?;
+        anyhow::ensure!(
+            checked[0].public_key() == identity.public_key()
+                && checked[1].public_key() == transport.public_key(),
+            "could not verify recovered keys"
+        );
+        self.storage
+            .set_signer_public_key(account.id, transport.public_key())?;
+        if let Some(backup) = backup {
+            backup.commit();
+        }
+        self.runner.stop(account.id).await;
         Ok(())
     }
 
@@ -266,19 +311,17 @@ impl AppState {
         self.session.vault().is_unlocked()
     }
 
-    /// Unlock every account and answer whatever arrived while locked.
-    ///
-    /// The passphrase is what opens the key files, and it is also what any
-    /// account still living in the Keychain is migrated onto on the way
-    /// through. That is deliberately the same step: an unlock that left half
-    /// the accounts behind would be an unlock that has to be explained.
-    async fn unlock_with(&self, passphrase: &str) -> Result<()> {
+    /// Unlock the selected account with the device password after macOS authentication.
+    async fn unlock_with(&self, passphrase: &str, selected: Option<AccountId>) -> Result<()> {
         if passphrase.is_empty() {
             anyhow::bail!("the passphrase cannot be empty");
         }
         self.keystore.set_passphrase(passphrase);
 
-        let accounts = self.accounts()?;
+        let mut accounts = match selected {
+            Some(id) => vec![self.storage.account(id)?],
+            None => self.accounts()?,
+        };
         for account in &accounts {
             if !self.keystore.holds(account.id) {
                 self.migrate(account.id).await?;
@@ -294,6 +337,22 @@ impl AppState {
             return Err(error.into());
         }
 
+        for account in &mut accounts {
+            if self.session.vault().identity_public_key(account.id)? != account.identity_public_key
+            {
+                self.lock();
+                anyhow::bail!("Stored wallet identity does not match.");
+            }
+            let transport = self.session.vault().transport_public_key(account.id)?;
+            if transport != account.signer_public_key {
+                // Complete a recovery interrupted between replacing the encrypted
+                // key file and updating its public metadata.
+                self.storage.set_signer_public_key(account.id, transport)?;
+                account.signer_public_key = transport;
+                self.runner.stop(account.id).await;
+            }
+        }
+
         // Ensure rather than start: an account already listening keeps its
         // connections, and one added since launch gets its own.
         for account in &accounts {
@@ -305,6 +364,7 @@ impl AppState {
     }
 
     pub fn lock(&self) {
+        self.auth_epoch.fetch_add(1, Ordering::SeqCst);
         self.session.lock();
         self.keystore.clear_passphrase();
     }
@@ -364,17 +424,8 @@ impl AppState {
         Ok(())
     }
 
-    /// Create a fresh identity, its transport key, and the account row.
-    pub async fn create_account(&self, label: String) -> Result<Account> {
-        self.add_account(label, Keys::generate()).await
-    }
-
-    /// Take an existing key. Accepts nsec or hex.
-    pub async fn import_account(&self, label: String, secret: &str) -> Result<Account> {
-        self.add_account(label, Keys::parse(secret)?).await
-    }
-
-    async fn add_account(&self, label: String, identity: Keys) -> Result<Account> {
+    /// Store the identity derived from the wallet's recovery phrase.
+    pub(crate) async fn add_account(&self, label: String, identity: Keys) -> Result<Account> {
         // Without one there is nothing to seal the new key with, and an
         // account whose keys cannot be written is an account that should not
         // be made.
@@ -434,7 +485,9 @@ impl AppState {
 
     /// Remove an account, its keys and everything hanging off it.
     pub async fn delete_account(&self, id: AccountId) -> Result<()> {
+        self.storage.account(id)?;
         self.runner.stop(id).await;
+        self.session.vault().forget(id);
         self.keystore.delete(id).await?;
         // Any copy left over from before the move is part of the account too.
         self.keychain.delete(id).await?;

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Byrgi",
+  "productName": "Cashr",
   "version": "0.1.0",
   "identifier": "com.dgrr.byrgi",
   "build": {
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Byrgi",
+        "title": "Cashr",
         "width": 400,
         "height": 560,
         "resizable": false,

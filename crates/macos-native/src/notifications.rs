@@ -206,7 +206,7 @@ mod platform {
 
     define_class!(
         #[unsafe(super(NSObject))]
-        #[name = "ByrgiNotificationDelegate"]
+        #[name = "CashrNotificationDelegate"]
         struct ResponseHandler;
 
         unsafe impl NSObjectProtocol for ResponseHandler {}
@@ -346,7 +346,7 @@ mod platform {
         }
 
         let content = UNMutableNotificationContent::new();
-        content.setTitle(&NSString::from_str("Byrgi is locked"));
+        content.setTitle(&NSString::from_str("Cashr is locked"));
         content.setBody(&NSString::from_str(&format!(
             "A request for {account_label} is waiting. Unlock to answer it."
         )));

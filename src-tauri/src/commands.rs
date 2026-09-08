@@ -56,26 +56,27 @@ pub async fn status(state: State<'_, AppState>) -> CommandResult<StatusView> {
     })
 }
 
-/// Unlock by typing the passphrase. `remember` puts it behind Touch ID.
+/// Unlock the selected wallet with Touch ID.
 #[tauri::command]
-pub async fn unlock(
+pub async fn unlock_with_touch_id(
     state: State<'_, AppState>,
-    passphrase: String,
-    remember: bool,
+    wallet: State<'_, crate::wallet::WalletService>,
+    account: Option<i64>,
 ) -> CommandResult<()> {
-    state.unlock(&passphrase, remember).await.map_err(fail)
-}
-
-/// Unlock with Touch ID, using the passphrase it guards.
-#[tauri::command]
-pub async fn unlock_with_touch_id(state: State<'_, AppState>) -> CommandResult<()> {
-    state.unlock_with_touch_id().await.map_err(fail)
-}
-
-/// Stop unlocking with Touch ID, and delete the passphrase it was guarding.
-#[tauri::command]
-pub async fn forget_touch_id(state: State<'_, AppState>) -> CommandResult<()> {
-    state.forget_touch_id().map_err(fail)
+    let _guard = wallet.gate.lock().await;
+    state
+        .unlock_with_touch_id(account.map(AccountId::new))
+        .await
+        .map_err(|error| {
+            if error
+                .downcast_ref::<signer_core::error::SignerError>()
+                .is_some()
+            {
+                "Recover this wallet with your recovery words to enable Touch ID.".into()
+            } else {
+                error.to_string()
+            }
+        })
 }
 
 /// Delete the old Keychain copies, once the key files are the real ones.
@@ -96,37 +97,54 @@ pub fn lock(
 
 #[tauri::command]
 pub async fn create_account(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
+    wallet: State<'_, crate::wallet::WalletService>,
     label: String,
 ) -> CommandResult<AccountView> {
-    let account = state.create_account(label).await.map_err(fail)?;
+    let account = crate::wallet::create_account(&app, &state, &wallet, label, None)
+        .await
+        .map_err(crate::wallet::create_error)?;
     Ok(AccountView::from(&account))
 }
 
 #[tauri::command]
 pub async fn import_account(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
+    wallet: State<'_, crate::wallet::WalletService>,
     label: String,
-    secret: String,
+    recovery: crate::wallet::WalletRecoveryInput,
 ) -> CommandResult<AccountView> {
-    let account = state.import_account(label, &secret).await.map_err(fail)?;
+    let account = crate::wallet::create_account(&app, &state, &wallet, label, Some(recovery))
+        .await
+        .map_err(crate::wallet::import_error)?;
     Ok(AccountView::from(&account))
 }
 
 #[tauri::command]
 pub async fn delete_account(
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
     wallet: State<'_, crate::wallet::WalletService>,
     account: i64,
 ) -> CommandResult<()> {
     let _guard = wallet.gate.lock().await;
-    if crate::wallet::has_wallet(&app, &state, account).map_err(fail)? {
-        return Err("This account has a Cashu wallet. Keep its keys and wallet backup; account deletion is disabled to protect its funds.".into());
-    }
+    wallet.lock();
     state
         .delete_account(AccountId::new(account))
         .await
+        .map_err(fail)
+}
+
+#[tauri::command]
+pub fn rename_account(
+    state: State<'_, AppState>,
+    account: i64,
+    label: String,
+) -> CommandResult<()> {
+    state
+        .storage
+        .rename_account(AccountId::new(account), &label)
         .map_err(fail)
 }
 
@@ -148,6 +166,32 @@ pub fn set_lightning_address(
         .storage
         .set_lightning_address(AccountId::new(account), address.as_deref())
         .map_err(fail)
+}
+
+#[tauri::command]
+pub async fn find_lightning_address(
+    state: State<'_, AppState>,
+    account: i64,
+) -> CommandResult<Option<String>> {
+    let account = state
+        .storage
+        .account(AccountId::new(account))
+        .map_err(fail)?;
+    let Some(profile) =
+        relay_transport::profile::fetch_profile(account.identity_public_key, &account.relays)
+            .await
+            .map_err(str::to_owned)?
+    else {
+        return Ok(None);
+    };
+    let metadata: serde_json::Value =
+        serde_json::from_str(&profile.content).map_err(|_| "Invalid Nostr profile.".to_owned())?;
+    Ok(metadata
+        .get("lud16")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 320 && value.contains('@'))
+        .map(str::to_owned))
 }
 
 #[tauri::command]
@@ -182,6 +226,9 @@ pub async fn relay_health(
 /// Mint a `bunker://` URI to paste into a client.
 #[tauri::command]
 pub fn pair_bunker(state: State<'_, AppState>, account: i64) -> CommandResult<String> {
+    if !state.session.vault().holds(AccountId::new(account)) {
+        return Err("Unlock this account before connecting a Nostr app.".into());
+    }
     let account = state
         .storage
         .account(AccountId::new(account))

@@ -1,12 +1,15 @@
 :root {
   color-scheme: light;
-  --bg: #f5f6f5;
+  --bg: #ffffff;
   --panel: #ffffff;
-  --raised: #f8faf9;
-  --text: #202b27;
-  --muted: #67736d;
-  --line: #dfe5e1;
-  --accent: #28745a;
+  --raised: #f5f5f5;
+  --text: #171717;
+  --muted: #626262;
+  --line: #e5e5e5;
+  --accent: #171717;
+  --primary: #171717;
+  --primary-hover: #333333;
+  --on-primary: #ffffff;
   --danger: #d13b2e;
   --ok: #28745a;
   --warn: #936600;
@@ -16,13 +19,16 @@
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #171d1a;
-    --panel: #202823;
-    --raised: #27302a;
-    --text: #e8eee9;
-    --muted: #a0afa5;
-    --line: #354139;
-    --accent: #8ad6b2;
+    --bg: #000000;
+    --panel: #101010;
+    --raised: #181818;
+    --text: #f5f5f5;
+    --muted: #a3a3a3;
+    --line: #2a2a2a;
+    --accent: #f5f5f5;
+    --primary: #f5f5f5;
+    --primary-hover: #d4d4d4;
+    --on-primary: #171717;
     --danger: #f18e84;
     --ok: #8ad6b2;
     --warn: #e0a92b;
@@ -48,8 +54,7 @@ body {
   margin: 0;
   display: flex;
   flex-direction: column;
-  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
-    sans-serif;
+  font: 12px/1.45 Monaco, monospace;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
@@ -88,7 +93,7 @@ textarea,
   align-items: center;
   gap: 4px;
   padding: 10px 14px;
-  background: var(--panel);
+  background: var(--bg);
   border-bottom: 1px solid var(--line);
   flex: none;
 }
@@ -108,10 +113,9 @@ textarea,
   min-width: 0;
 }
 
-.wallet-balance { font-size: 36px; font-weight: 650; letter-spacing: -1.5px; font-variant-numeric: tabular-nums; }
-#tab-wallet details.card { display: block; margin-top: 10px; }
+.wallet-balance { font-size: 24px; font-weight: 650; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+#tab-wallet .wallet-flow { display: block; margin-top: 10px; }
 #tab-wallet form.stack, #wallet-invoice-box { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-#tab-wallet summary { cursor: pointer; font-weight: 600; }
 #tab-wallet textarea { min-height: 70px; width: 100%; overflow-wrap: anywhere; }
 #wallet-destination { overflow-wrap: anywhere; }
 #wallet-review { margin-top: 12px; border-color: var(--accent); }
@@ -142,15 +146,14 @@ textarea,
   background: none;
   color: var(--muted);
   padding: 7px 6px;
-  border-radius: 6px;
+  border-radius: 999px;
   cursor: default;
   font: inherit;
 }
 
 .tab.is-active {
-  background: var(--panel);
+  background: var(--raised);
   color: var(--text);
-  box-shadow: 0 1px 3px rgb(0 0 0 / 7%), 0 0 0 1px var(--line);
   font-weight: 600;
 }
 
@@ -173,7 +176,7 @@ main {
 h2 {
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
   color: var(--muted);
   margin: 18px 0 8px;
   font-weight: 600;
@@ -215,6 +218,26 @@ h2 {
   gap: 6px;
 }
 
+.card.account-card {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 16px;
+  gap: 12px;
+}
+
+.account-card-details { min-width: 0; display: grid; gap: 6px; }
+.account-card-details .title { overflow-wrap: anywhere; }
+.account-card-badges { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.account-card-default { grid-column: 1 / -1; }
+.connection-paste { margin-top: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+
 .card .title {
   font-weight: 600;
 }
@@ -230,7 +253,7 @@ button.start {
 }
 
 .mono {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: inherit;
   font-size: 11px;
   color: var(--muted);
   overflow: hidden;
@@ -300,7 +323,7 @@ button {
   min-height: 32px;
   padding: 6px 10px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 999px;
   background: var(--raised);
   color: var(--text);
   font: inherit;
@@ -329,13 +352,13 @@ button:disabled {
 }
 
 button.primary {
-  background: var(--accent);
+  background: var(--primary);
   border-color: transparent;
-  color: var(--panel);
+  color: var(--on-primary);
 }
 
 button.primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 85%, var(--text));
+  background: var(--primary-hover);
   border-color: transparent;
 }
 
@@ -380,12 +403,12 @@ button.icon[aria-pressed="true"] {
   color: var(--accent);
 }
 
-/* An SVG icon sitting in a row of text ones. `display: block` keeps it off
-   the text baseline, which would otherwise leave it a pixel low. */
+/* Keep icons consistently sized and off the text baseline. */
 .glyph {
   display: block;
   width: 16px;
   height: 16px;
+  flex-shrink: 0;
 }
 
 /* --------------------------------------------------------------- settings */
@@ -400,8 +423,8 @@ button.icon[aria-pressed="true"] {
 .settings-heading h1,
 .page-heading h1 {
   margin: 0;
-  font-size: 20px;
-  letter-spacing: -0.5px;
+  font-size: 14px;
+  letter-spacing: 0;
   font-weight: 600;
 }
 
@@ -446,6 +469,15 @@ button.icon[aria-pressed="true"] {
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
+
+.recovery-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.recovery-heading select { flex: none; width: 104px; padding: 6px 8px; font-size: 12px; }
+.recovery-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.account-form .recovery-word { position: relative; min-width: 0; margin: 0; font-weight: normal; }
+.recovery-word[hidden] { display: none; }
+.recovery-word span { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 10px; pointer-events: none; }
+.recovery-word input { box-sizing: border-box; width: 100%; min-width: 0; padding: 12px 6px 12px 26px; font-size: 12px; }
+#account-error:empty { display: none; }
 
 button.plus {
   font-size: 16px;
@@ -597,7 +629,7 @@ button.plus[aria-expanded="true"] {
 
 .hint {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.55;
   margin: 6px 0 0;
 }
@@ -609,7 +641,7 @@ button.plus[aria-expanded="true"] {
   border-radius: 6px;
   background: var(--panel);
   border: 1px solid var(--line);
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-family: inherit;
   font-size: 11px;
   word-break: break-all;
   color: var(--muted);
@@ -632,21 +664,21 @@ button.plus[aria-expanded="true"] {
 /* Compact identity and balance summaries share the same visual hierarchy. */
 .brand-mark { width: 30px; height: 30px; flex: none; color: var(--accent); }
 .brand-account { display: flex; flex-direction: column; min-width: 0; }
-.brand-name { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; letter-spacing: -0.3px; }
+.brand-name { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; letter-spacing: 0; }
 .brand-account .picker { width: 100%; padding: 0; font-size: 11px; color: var(--muted); text-overflow: ellipsis; }
 #lock-toggle { font-size: 11px; font-weight: 600; }
-#close { font-size: 20px; font-weight: 300; }
 button.icon[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
 .page-heading { margin-bottom: 18px; }
-.eyebrow { font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
-.account-overview, .wallet-overview { padding: 16px; background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
-.account-overview .title { font-size: 21px; letter-spacing: -0.5px; overflow-wrap: anywhere; }
-.identity-avatar { width: 38px; height: 38px; display: grid; place-items: center; flex: none; border-radius: 11px; background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--accent); font-size: 18px; font-weight: 600; }
+.eyebrow { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0; color: var(--muted); }
+.account-overview { padding: 16px; background: var(--panel); }
+.wallet-overview { padding: 20px 12px; border: 0; background: none; text-align: center; }
+.account-overview .title { font-size: 14px; letter-spacing: 0; overflow-wrap: anywhere; }
+.identity-avatar { width: 38px; height: 38px; display: grid; place-items: center; flex: none; border-radius: 11px; background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--accent); font-size: 14px; font-weight: 600; }
 .identity-key { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
 .identity-key .mono { flex: 1; }
 .identity-key button { font-size: 11px; min-height: 26px; }
 .pair-section { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
-.pair-section h2 { margin: 0; color: var(--text); font-size: 13px; text-transform: none; letter-spacing: 0; }
+.pair-section h2 { margin: 0; color: var(--text); font-size: 12px; text-transform: none; letter-spacing: 0; }
 .pair-section .hint { font-size: 11px; margin: 4px 0 10px; }
 .pair-section .split button { font-size: 12px; }
 #relay-list .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -654,20 +686,20 @@ button.icon[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 
 #client-list .card { flex-wrap: wrap; }
 #client-list .grow { flex-basis: 100%; }
 #rule-list .grow { overflow-wrap: anywhere; }
-#unlock-hint { padding: 0; border: 0; background: none; text-align: left; font-size: 12px; line-height: 1.5; }
+#unlock-hint { padding: 0; border: 0; background: none; text-align: left; font-size: 11px; line-height: 1.5; }
 #unlock-error { padding: 8px 10px; color: var(--danger); border-color: var(--danger); }
-.unlock-title { font-size: 15px; }
+.unlock-title { font-size: 14px; }
 #wallet-picker { width: 100%; margin: 10px 0; }
 .wallet-overview { margin-top: 12px; }
 .wallet-overview .hint { margin: 0; overflow-wrap: anywhere; }
 #wallet-pending:empty { display: none; }
 #wallet-mint { font-size: 10px; }
-#wallet-open { align-self: flex-start; margin-top: 6px; }
-#tab-wallet summary { padding: 2px 0; }
-#tab-wallet details[open] > summary { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+#wallet-open { align-self: center; margin-top: 10px; min-width: 150px; }
+.wallet-flow-heading { margin: 0 0 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); font: inherit; font-weight: 600; color: var(--text); text-transform: none; letter-spacing: normal; }
+.wallet-scan { display: inline-flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; }
 #wallet-destination { white-space: normal; }
 #wallet-review h2 { margin-top: 0; color: var(--text); }
-#wallet-review-amount { margin: 0; font-size: 24px; font-weight: 650; }
+#wallet-review-amount { margin: 0; font-size: 18px; font-weight: 650; }
 .transaction-amount { font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }
 .transaction-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
 .panel:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
@@ -677,3 +709,53 @@ button.icon[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 
 input[type="checkbox"] { accent-color: var(--accent); }
 textarea { resize: vertical; }
 @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.menu-toggle { width: 36px; height: 36px; padding: 6px; display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; }
+.menu-toggle .glyph { width: 24px; height: 24px; }
+.header-pin { width: 36px; height: 36px; padding: 8px; display: grid; place-items: center; flex-shrink: 0; border-radius: 50%; }
+.header-pin .glyph { width: 18px; height: 18px; }
+.wallet-welcome { display: flex; flex-direction: column; gap: 12px; max-width: 280px; margin: 60px auto 0; text-align: center; }
+.wallet-welcome h1 { margin: 0 0 12px; font-size: 18px; }
+.wallet-welcome button { min-height: 44px; }
+#tab-setup .account-form { margin-top: 16px; }
+.menu-dismiss { position: fixed; inset: 60px 0 0; z-index: 19; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.menu-dismiss:hover:not(:disabled) { background: transparent; }
+.main-menu { position: fixed; top: 54px; right: 16px; width: 226px; padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; z-index: 20; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 40px #0005; }
+.main-menu button { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; border-radius: 6px; }
+.main-menu .glyph { width: 23px; height: 23px; }
+.main-menu [aria-current="page"] { border-color: var(--muted); }
+.back { border: 0; background: none; color: var(--muted); padding: 0; margin-bottom: 12px; min-height: 24px; }
+.wallet-heading { position: absolute; top: 70px; right: 16px; }
+.wallet-overview { margin: 0; padding: 4px 28px 16px; gap: 8px; }
+.mint-choice { align-self: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--muted); padding: 3px 9px; min-height: 22px; }
+.wallet-shortcuts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 4px 0 16px; }
+.wallet-shortcuts button { border-radius: 6px; padding: 14px 4px; min-height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; font-size: 11px; }
+.wallet-shortcuts .glyph { width: 22px; height: 22px; }
+.wallet-status:empty { display: none; }
+#wallet-history .card { padding: 10px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+#wallet-history .empty { border: 0; background: none; padding: 16px 10px; }
+#wallet-picker { margin: 0 0 8px; font-size: 10px; text-overflow: ellipsis; }
+.settings-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
+.settings-tools button { white-space: normal; border-radius: 6px; }
+.settings-tools button.icon { border: 1px solid var(--line); background: var(--raised); }
+.foot { padding: 6px 16px; font-size: 10px; }
+.recovery-words { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; padding: 12px 12px 12px 34px; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; user-select: text; }
+.recovery-words li { padding-left: 2px; }
+#wallet-backup-mints { overflow-wrap: anywhere; user-select: text; margin-bottom: 10px; }
+
+.qr-code { display: block; width: 244px; max-width: 100%; height: auto; margin: 8px auto; background: white; border-radius: 4px; image-rendering: pixelated; }
+.back { display: inline-flex; align-items: center; gap: 6px; }
+.back .glyph { width: 14px; height: 14px; }
+.mint-choice { display: inline-flex; align-items: center; gap: 3px; }
+.mint-choice .glyph { width: 11px; height: 11px; flex-shrink: 0; }
+#wallet-choose-mint-label { overflow: hidden; text-overflow: ellipsis; }
+#wallet-share-token, #wallet-nostr-uri { max-height: 64px; overflow-wrap: anywhere; }
+#wallet-pending-tokens { margin-bottom: 18px; }
+[data-wallet-view="nostr"] { display: block; margin-top: 10px; padding: 16px; }
+#wallet-nostr-heading { margin-bottom: 0; }
+.connection-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
+.connection-actions button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 12px 16px; border-radius: 8px; text-align: left; white-space: normal; }
+.connection-actions .glyph { width: 20px; height: 20px; }
+#wallet-nostr-qr-box { margin-top: 18px; }
+.hint:empty, #unlock-hint:empty { display: none; }

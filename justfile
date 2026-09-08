@@ -1,7 +1,8 @@
-# Byrgi
+# Cashr
 
 # The code signing identity builds are signed with. Override with
 # APPLE_SIGNING_IDENTITY to use a Developer ID instead.
+# Keep the existing certificate so installed wallets retain their signing identity.
 identity := env_var_or_default("APPLE_SIGNING_IDENTITY", "Byrgi Local")
 
 # How long the self-signed certificate lasts.
@@ -46,21 +47,18 @@ dev: _needs-tauri
     # arrive without their buttons.
     cd src-tauri && cargo tauri dev
 
-# Generate the icon set from icons/icon.png
-# Regenerate the icon set from icons/icon.svg. Needs rsvg-convert.
+# Regenerate app and menu bar icons from their SVG sources.
 icon: _needs-tauri
     #!/usr/bin/env bash
     set -euo pipefail
-    cd src-tauri/icons
-    rsvg-convert -w 36 -h 36 tray.svg -o tray.png
-    for size in 32 64 128 512; do
-        rsvg-convert -w "$size" -h "$size" icon.svg -o "${size}x${size}.png"
-    done
-    rsvg-convert -w 256 -h 256 icon.svg -o '128x128@2x.png'
-    rsvg-convert -w 1024 -h 1024 icon.svg -o icon.png
-    # icon.png is the 1024 master the Tauri CLI wants; the bundle itself is
-    # built from the sizes above, which are the ones an icns can hold.
-    cd .. && cargo tauri icon icons/icon.png
+    cd src-tauri
+    cargo tauri icon icons/icon.svg
+    icon_work="$(mktemp -d)"
+    trap 'rm -rf "$icon_work"' EXIT
+    cargo tauri icon icons/icon.svg --png 512 --output "$icon_work"
+    cp "$icon_work/512x512.png" icons/512x512.png
+    cargo tauri icon icons/tray.svg --png 36 --output "$icon_work"
+    cp "$icon_work/36x36.png" icons/tray.png
 
 # Create the self-signed code signing identity, once per Mac
 [macos]
@@ -169,7 +167,7 @@ verify:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    app="src-tauri/target/release/bundle/macos/Byrgi.app"
+    app="src-tauri/target/release/bundle/macos/Cashr.app"
     if [[ ! -d "$app" ]]; then
         echo "No bundle at $app. Run: just build" >&2
         exit 1
