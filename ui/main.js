@@ -368,8 +368,10 @@ async function openWallet({ hideAfterUnlock = false } = {}) {
     await refreshAll();
     // Startup only needs the unlock prompt. Keep approvals, errors and any
     // window the user explicitly pinned visible after authentication.
+    // Background wallet loads and event refreshes also increment busy, so
+    // waiting for that counter to reach zero can skip this hide forever.
     if (hideAfterUnlock && unlocked && state.tab === "wallet" &&
-        !state.pinned && state.busy === 0 && state.pending === 0 && state.paymentPending === 0) {
+        !state.pinned && state.pending === 0 && state.paymentPending === 0) {
       window.WalletUI?.hideSecrets?.();
       await invoke("hide_window");
     }

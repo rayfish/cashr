@@ -154,6 +154,27 @@ test('startup unlock keeps pinned windows and pending approvals visible', async 
   }
 });
 
+test('startup unlock hides the window while a background wallet request is still running', async () => {
+  let finishBackground;
+  const view = app(async command => {
+    if (command === 'scan_fixture') return new Promise(resolve => { finishBackground = resolve; });
+  });
+  vm.runInContext('state.account = 7; state.accounts = [{id: 7}]; state.hasTouchId = true; state.tab = "wallet";', view.context);
+  view.context.refreshStatus = async () => {};
+  view.context.refreshAll = async () => {};
+  view.context.selectTab = () => {};
+  const background = view.context.call('scan_fixture');
+  try {
+    await view.context.start();
+    assert.equal(vm.runInContext('state.busy', view.context), 1);
+    assert.equal(view.calls.filter(call => call.command === 'hide_window').length, 1);
+  } finally {
+    finishBackground();
+    await background;
+  }
+  assert.equal(view.calls.filter(call => call.command === 'hide_window').length, 1);
+});
+
 test('cancelling automatic unlock waits for another explicit open or manual retry', async () => {
   const view = app(async () => { throw 'Authentication cancelled.'; });
   vm.runInContext('state.account = 7; state.accounts = [{id: 7}]; state.hasTouchId = true; state.tab = "wallet";', view.context);
