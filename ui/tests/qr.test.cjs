@@ -127,9 +127,31 @@ test('opening Cashr prompts for the selected locked wallet once and skips an unl
   vm.runInContext('state.unlockedAccounts = [7];', view.context);
   finish();
   await opening;
+  assert.equal(view.calls.filter(call => call.command === 'hide_window').length, 1);
   await view.events.get('tauri:cashr://opened')();
   assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 1);
+  assert.equal(view.calls.filter(call => call.command === 'hide_window').length, 1);
+  vm.runInContext('state.unlockedAccounts = [];', view.context);
+  const reopening = view.events.get('tauri:cashr://opened')();
+  await new Promise(resolve => setImmediate(resolve));
+  finish();
+  await reopening;
+  assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 2);
+  assert.equal(view.calls.filter(call => call.command === 'hide_window').length, 1);
   assert.equal(vm.runInContext('state.openingWallet || state.unlocking', view.context), false);
+});
+
+test('startup unlock keeps pinned windows and pending approvals visible', async () => {
+  for (const condition of ['state.pinned = true', 'state.pending = 1', 'state.paymentPending = 1']) {
+    const view = app();
+    vm.runInContext('state.account = 7; state.accounts = [{id: 7}]; state.hasTouchId = true; state.tab = "wallet";', view.context);
+    view.context.refreshStatus = async () => {};
+    view.context.refreshAll = async () => { vm.runInContext(condition, view.context); };
+    view.context.selectTab = () => {};
+    await view.context.start();
+    assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 1);
+    assert.equal(view.calls.some(call => call.command === 'hide_window'), false, condition);
+  }
 });
 
 test('cancelling automatic unlock waits for another explicit open or manual retry', async () => {
@@ -143,6 +165,7 @@ test('cancelling automatic unlock waits for another explicit open or manual retr
   assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 1);
   assert.equal(view.get('unlock-touch-id').disabled, false);
   assert.equal(view.get('unlock-error').textContent, 'Authentication cancelled.');
+  assert.equal(view.calls.some(call => call.command === 'hide_window'), false);
   await view.events.get('tauri:cashr://opened')();
   assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 2);
 });

@@ -337,10 +337,12 @@ async function unlockWithTouchId() {
   try {
     await invoke("unlock_with_touch_id", { account: state.account });
     await refreshAll();
+    return true;
   } catch (failure) {
     await refreshStatus();
     error.textContent = String(failure);
     error.hidden = false;
+    return false;
   } finally {
     state.unlocking = false;
     state.busy -= 1;
@@ -352,17 +354,25 @@ async function unlockWithTouchId() {
 
 /// Called on launch and explicit opens, never on focus or status updates:
 /// returning from a cancelled system dialog must not start another prompt.
-async function openWallet() {
+async function openWallet({ hideAfterUnlock = false } = {}) {
   if (state.openingWallet || state.unlocking) return;
   state.openingWallet = true;
   try {
+    let unlocked = false;
     await refreshStatus();
     if (currentAccount() && !state.unlockedAccounts.includes(state.account) && state.tab !== "setup") {
       selectTab("wallet");
-      if (state.hasTouchId) await unlockWithTouchId();
+      if (state.hasTouchId) unlocked = await unlockWithTouchId();
       else $("unlock-recover").focus();
     }
     await refreshAll();
+    // Startup only needs the unlock prompt. Keep approvals, errors and any
+    // window the user explicitly pinned visible after authentication.
+    if (hideAfterUnlock && unlocked && state.tab === "wallet" &&
+        !state.pinned && state.busy === 0 && state.pending === 0 && state.paymentPending === 0) {
+      window.WalletUI?.hideSecrets?.();
+      await invoke("hide_window");
+    }
   } finally {
     state.openingWallet = false;
   }
@@ -370,7 +380,7 @@ async function openWallet() {
 
 async function start() {
   await listen("cashr://opened", () => openWallet().catch(error => toast(String(error))));
-  await openWallet();
+  await openWallet({ hideAfterUnlock: true });
 }
 
 function renderAccountPicker() {
