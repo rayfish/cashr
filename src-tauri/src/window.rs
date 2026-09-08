@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager, PhysicalPosition, Rect, Runtime, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Rect, Runtime, WebviewWindow};
 
 pub const MAIN: &str = "main";
 
@@ -78,6 +78,13 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) {
     let _ = window.set_focus();
 }
 
+/// Explicit user opening, distinct from restoring the window after a scanner
+/// or system dialog. Only an explicit opening should trigger wallet unlock.
+pub fn open<R: Runtime>(app: &AppHandle<R>) {
+    show(app);
+    let _ = app.emit("cashr://opened", ());
+}
+
 pub fn hide<R: Runtime>(app: &AppHandle<R>, state: &WindowState) {
     if let Some(window) = get(app) {
         let _ = window.hide();
@@ -106,6 +113,7 @@ pub fn toggle_under<R: Runtime>(app: &AppHandle<R>, state: &WindowState, anchor:
     }
     let _ = window.show();
     let _ = window.set_focus();
+    let _ = app.emit("cashr://opened", ());
 }
 
 /// Centre the window on the icon, kept inside the screen's usable area.

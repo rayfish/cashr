@@ -204,7 +204,13 @@ pub fn run() -> Result<()> {
             commands::start_window_drag,
             commands::hide_window,
         ])
-        .run(tauri::generate_context!())?;
+        .build(tauri::generate_context!())?
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                window::open(app);
+            }
+        });
 
     Ok(())
 }

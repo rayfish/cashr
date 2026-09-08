@@ -22,7 +22,7 @@ function app(scan = async () => [], pair = async () => ({ client_name: 'Test cli
       if (command.startsWith('scan_') || command === 'prepare_scan') return scan(command);
       if (command === 'pair_client') return pair(args);
       if (command === 'prompts') return prompts();
-    } }, event: { listen() {} } } },
+    } }, event: { listen(name, handler) { events.set('tauri:' + name, handler); return Promise.resolve(() => {}); } } } },
     document: {
       getElementById(id) { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); },
       createElement() { return new Element(); },
@@ -32,8 +32,8 @@ function app(scan = async () => [], pair = async () => ({ client_name: 'Test cli
     setTimeout() {}, clearTimeout() {}, setInterval() {}, requestAnimationFrame(callback) { callback(); },
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../qr.js'), 'utf8'), context);
-  const source = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8').replace(/wire\(\);\s*refreshAll\(\);\s*$/, '');
-  vm.runInContext(source, context);
+  const source = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
+  vm.runInContext(source.slice(0, source.lastIndexOf('\nwire();')), context);
   vm.runInContext('state.tab = "scan"', context);
   return { context, calls, elements, events, get: id => context.document.getElementById(id) };
 }
@@ -107,6 +107,60 @@ test('Touch ID unlock targets the selected wallet and leaves cancellation retrya
   assert.equal(view.get('unlock-touch-id').disabled, false);
   assert.equal(view.get('unlock-error').hidden, false);
   assert.equal(view.get('unlock-error').textContent, 'Authentication cancelled.');
+});
+
+test('opening Cashr prompts for the selected locked wallet once and skips an unlocked wallet', async () => {
+  let finish;
+  const view = app(async () => new Promise(resolve => { finish = resolve; }));
+  vm.runInContext('state.account = 7; state.accounts = [{id: 7}]; state.hasTouchId = true; state.tab = "wallet";', view.context);
+  view.context.refreshStatus = async () => {};
+  view.context.refreshAll = async () => {};
+  view.context.selectTab = name => { assert.equal(name, 'wallet'); };
+  const opening = view.context.start();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(view.events.has('tauri:cashr://opened'));
+  assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 1);
+  assert.equal(view.calls.find(call => call.command === 'unlock_with_touch_id').args.account, 7);
+  await view.events.get('tauri:cashr://opened')();
+  await view.context.unlockWithTouchId();
+  assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 1);
+  vm.runInContext('state.unlockedAccounts = [7];', view.context);
+  finish();
+  await opening;
+  await view.events.get('tauri:cashr://opened')();
+  assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 1);
+  assert.equal(vm.runInContext('state.openingWallet || state.unlocking', view.context), false);
+});
+
+test('cancelling automatic unlock waits for another explicit open or manual retry', async () => {
+  const view = app(async () => { throw 'Authentication cancelled.'; });
+  vm.runInContext('state.account = 7; state.accounts = [{id: 7}]; state.hasTouchId = true; state.tab = "wallet";', view.context);
+  view.context.refreshStatus = async () => {};
+  view.context.refreshAll = async () => {};
+  view.context.selectTab = () => {};
+  await view.context.start();
+  await view.context.refreshAll();
+  assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 1);
+  assert.equal(view.get('unlock-touch-id').disabled, false);
+  assert.equal(view.get('unlock-error').textContent, 'Authentication cancelled.');
+  await view.events.get('tauri:cashr://opened')();
+  assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 2);
+});
+
+test('automatic unlock skips new wallets and recovery setup and offers recovery when local access is missing', async () => {
+  const view = app();
+  view.context.refreshStatus = async () => {};
+  view.context.refreshAll = async () => {};
+  view.context.selectTab = () => {};
+  await view.context.openWallet();
+  vm.runInContext('state.account = 7; state.accounts = [{id: 7}]; state.tab = "setup"; state.hasTouchId = true;', view.context);
+  await view.context.openWallet();
+  vm.runInContext('state.tab = "wallet"; state.hasTouchId = false;', view.context);
+  let recoveryFocused = false;
+  view.get('unlock-recover').focus = () => { recoveryFocused = true; };
+  await view.context.openWallet();
+  assert.equal(recoveryFocused, true);
+  assert.equal(view.calls.filter(call => call.command === 'unlock_with_touch_id').length, 0);
 });
 
 test('pasting a phrase fills numbered fields from the beginning and normalizes whitespace', () => {

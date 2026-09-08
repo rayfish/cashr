@@ -8,6 +8,8 @@ const state = {
   client: null,
   activityCursor: null,
   unlocked: false,
+  unlocking: false,
+  openingWallet: false,
   unlockedAccounts: [],
   lightningAccount: null,
   lightningDirty: false,
@@ -319,6 +321,8 @@ function renderUnlock() {
 }
 
 async function unlockWithTouchId() {
+  if (state.unlocking) return;
+  state.unlocking = true;
   const button = $("unlock-touch-id");
   const error = $("unlock-error");
   const label = button.textContent;
@@ -338,11 +342,35 @@ async function unlockWithTouchId() {
     error.textContent = String(failure);
     error.hidden = false;
   } finally {
+    state.unlocking = false;
     state.busy -= 1;
     syncPinned();
     button.disabled = false;
     button.textContent = label;
   }
+}
+
+/// Called on launch and explicit opens, never on focus or status updates:
+/// returning from a cancelled system dialog must not start another prompt.
+async function openWallet() {
+  if (state.openingWallet || state.unlocking) return;
+  state.openingWallet = true;
+  try {
+    await refreshStatus();
+    if (currentAccount() && !state.unlockedAccounts.includes(state.account) && state.tab !== "setup") {
+      selectTab("wallet");
+      if (state.hasTouchId) await unlockWithTouchId();
+      else $("unlock-recover").focus();
+    }
+    await refreshAll();
+  } finally {
+    state.openingWallet = false;
+  }
+}
+
+async function start() {
+  await listen("cashr://opened", () => openWallet().catch(error => toast(String(error))));
+  await openWallet();
 }
 
 function renderAccountPicker() {
@@ -1479,4 +1507,4 @@ function wire() {
 }
 
 wire();
-refreshAll();
+start().catch(error => toast(String(error)));

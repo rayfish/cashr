@@ -66,10 +66,7 @@ fn on_tray_event<R: Runtime>(tray: &TrayIcon<R>, event: TrayIconEvent) {
 
 fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     match event.id().as_ref() {
-        OPEN => window::show(app),
-        // Unlocking needs the passphrase typed, and a menu item has nowhere
-        // to type it, so this opens the window on the box that does.
-        UNLOCK => window::show(app),
+        OPEN | UNLOCK => window::open(app),
         LOCK => app.state::<AppState>().lock(),
         QUIT => app.exit(0),
         other => tracing::debug!("unhandled menu item: {other}"),
