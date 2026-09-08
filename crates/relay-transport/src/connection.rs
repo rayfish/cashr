@@ -36,6 +36,12 @@ const BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// loop cannot come round, because the connect never returns.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// TCP can remain open after sleep or a network change even though no traffic
+/// gets through. Probe the relay and require it to echo this connection's ping.
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+const PONG_TIMEOUT: Duration = Duration::from_secs(10);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// How long a connection has to survive before it counts as healthy enough to
 /// reset the backoff. Without this, a relay that accepts and immediately hangs
 /// up gets reconnected in a tight loop.
@@ -99,20 +105,24 @@ impl Connection {
             .map_err(|_| "timed out connecting".to_string())?
             .map_err(|e| e.to_string())?;
 
-        let (mut sink, mut stream) = socket.into_streaming().split();
+        // This relay's task owns the whole socket. Other tasks enqueue events;
+        // reads, writes and heartbeat deadlines stay in this one loop.
+        let mut socket = socket.into_streaming();
         self.set_health(true, None);
         tracing::debug!(relay = %self.relay, "connected");
 
         let mut session = RelaySession::new(self.subscription.clone(), self.filter.clone());
         let mut ticker = tokio::time::interval(Duration::from_secs(1));
-        sink.send(Frame::text(session.subscribe().as_json()))
-            .await
-            .map_err(|e| e.to_string())?;
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut next_ping = Instant::now() + PING_INTERVAL;
+        let mut pong_deadline = None;
+        let mut ping_id = 0_u64;
+        send_frame(&mut socket, Frame::text(session.subscribe().as_json())).await?;
 
         loop {
             let mut messages = Vec::new();
             tokio::select! {
-                frame = stream.next() => {
+                frame = socket.next() => {
                     // yawc reports a read error as end of stream, so both mean
                     // the same thing here: reconnect.
                     let Some(frame) = frame else { return Ok(()) };
@@ -130,6 +140,12 @@ impl Connection {
                                 }
                             }
                         },
+                        OpCode::Pong => {
+                            if pong_deadline.is_some() && frame.payload().as_ref() == ping_id.to_be_bytes() {
+                                pong_deadline = None;
+                                next_ping = Instant::now() + PING_INTERVAL;
+                            }
+                        },
                         OpCode::Close => return Ok(()),
                         // Pings are answered by yawc itself.
                         _ => {}
@@ -138,6 +154,14 @@ impl Connection {
                 event = outgoing.recv() => {
                     let Some(event) = event else { return Ok(()) };
                     messages.push(session.publish(event));
+                }
+                _ = tokio::time::sleep_until(pong_deadline.unwrap_or(next_ping)) => {
+                    if pong_deadline.is_some() {
+                        return Err("timed out waiting for relay pong".to_string());
+                    }
+                    ping_id = ping_id.wrapping_add(1);
+                    pong_deadline = Some(Instant::now() + PONG_TIMEOUT);
+                    send_frame(&mut socket, Frame::ping(ping_id.to_be_bytes().to_vec())).await?;
                 }
                 _ = ticker.tick() => {}
             }
@@ -148,9 +172,7 @@ impl Connection {
             let error = session.error();
             self.set_health(error.is_none(), error);
             for message in messages {
-                sink.send(Frame::text(message.as_json()))
-                    .await
-                    .map_err(|e| e.to_string())?;
+                send_frame(&mut socket, Frame::text(message.as_json())).await?;
             }
         }
     }
@@ -160,6 +182,18 @@ impl Connection {
         health.connected = connected;
         health.last_error = error;
     }
+}
+
+/// A blocked write must also release the connection to the reconnect loop.
+async fn send_frame<S>(sink: &mut S, frame: Frame) -> Result<(), String>
+where
+    S: futures::Sink<Frame> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    timeout(WRITE_TIMEOUT, sink.send(frame))
+        .await
+        .map_err(|_| "timed out writing to relay".to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -177,6 +211,196 @@ mod tests {
     use tokio::sync::mpsc::channel;
 
     use super::*;
+
+    /// Keep real socket I/O on a running clock, advancing only the timer under
+    /// test. Tokio's automatic time advance can otherwise race the handshake.
+    async fn advance_time(duration: Duration) {
+        tokio::time::pause();
+        tokio::time::advance(duration).await;
+        tokio::time::resume();
+        tokio::task::yield_now().await;
+    }
+
+    async fn local_relay() -> (
+        RelayUrl,
+        Receiver<yawc::HttpWebSocket>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay = RelayUrl::parse(&format!("ws://{}", listener.local_addr().unwrap())).unwrap();
+        let (accepted, sockets) = channel(4);
+        let server = tokio::spawn(async move {
+            loop {
+                let (socket, _) = listener.accept().await.unwrap();
+                let accepted = accepted.clone();
+                tokio::spawn(async move {
+                    let service = service_fn(move |mut request| {
+                        let (response, upgrade) = WebSocket::upgrade(&mut request).unwrap();
+                        let accepted = accepted.clone();
+                        tokio::spawn(async move {
+                            let _ = accepted.send(upgrade.await.unwrap()).await;
+                        });
+                        async { Ok::<_, hyper::Error>(response) }
+                    });
+                    http1::Builder::new()
+                        .serve_connection(TokioIo::new(socket), service)
+                        .with_upgrades()
+                        .await
+                        .unwrap();
+                });
+            }
+        });
+        (relay, sockets, server)
+    }
+
+    fn test_connection(relay: RelayUrl) -> (Connection, Receiver<Event>) {
+        let (incoming, receiver) = channel(4);
+        let health = Arc::new(Mutex::new(RelayHealth {
+            relay: relay.clone(),
+            connected: false,
+            last_error: None,
+        }));
+        (
+            Connection {
+                account: AccountId::new(1),
+                vault: Arc::new(Vault::new()),
+                relay,
+                filter: Filter::new().kind(Kind::NostrConnect),
+                subscription: SubscriptionId::new("heartbeat-test"),
+                incoming,
+                health,
+            },
+            receiver,
+        )
+    }
+
+    async fn wait_disconnected(health: &Mutex<RelayHealth>) {
+        timeout(Duration::from_secs(2), async {
+            while health.lock().unwrap().connected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("connection must be marked disconnected");
+    }
+
+    #[tokio::test]
+    async fn silent_relay_times_out_reconnects_and_delivers_events() {
+        timeout(Duration::from_secs(60), async {
+            let (relay, mut sockets, server) = local_relay().await;
+            let (connection, mut incoming) = test_connection(relay);
+            let health = Arc::clone(&connection.health);
+            let (_outgoing, queue) = channel(1);
+            let client = tokio::spawn(connection.run(queue));
+            let mut silent = sockets.recv().await.unwrap().into_streaming();
+            let subscription = silent.next().await.unwrap();
+            assert!(matches!(
+                ClientMessage::from_json(subscription.payload()).unwrap(),
+                ClientMessage::Req { .. }
+            ));
+
+            advance_time(PING_INTERVAL).await;
+            // Do not read the ping: yawc would automatically answer it. Keep
+            // the TCP socket open and send traffic that must not satisfy it.
+            silent.send(Frame::pong("unrelated pong")).await.unwrap();
+            let event = EventBuilder::new(Kind::NostrConnect, "encrypted request")
+                .finalize(&Keys::generate())
+                .unwrap();
+            let message = RelayMessage::event(SubscriptionId::new("heartbeat-test"), event.clone());
+            silent.send(Frame::text(message.as_json())).await.unwrap();
+            assert_eq!(incoming.recv().await.unwrap().id, event.id);
+
+            advance_time(PONG_TIMEOUT).await;
+            wait_disconnected(&health).await;
+            assert_eq!(
+                health.lock().unwrap().last_error.as_deref(),
+                Some("timed out waiting for relay pong")
+            );
+            timeout(Duration::from_secs(2), async {
+                while silent.next().await.is_some() {}
+            })
+            .await
+            .expect("timed-out socket must be closed before reconnecting");
+            advance_time(BACKOFF_START).await;
+            let mut recovered = sockets.recv().await.unwrap().into_streaming();
+            assert_eq!(
+                recovered.next().await.unwrap().payload(),
+                subscription.payload()
+            );
+            recovered
+                .send(Frame::text(message.as_json()))
+                .await
+                .unwrap();
+            assert_eq!(incoming.recv().await.unwrap().id, event.id);
+            assert!(health.lock().unwrap().connected);
+            assert!(health.lock().unwrap().last_error.is_none());
+            client.abort();
+            server.abort();
+        })
+        .await
+        .expect("silent relay must recover within a bounded time");
+    }
+
+    #[tokio::test]
+    async fn matching_pongs_keep_idle_relay_connected_and_close_reconnects() {
+        timeout(Duration::from_secs(120), async {
+            let (relay, mut sockets, server) = local_relay().await;
+            let (connection, mut incoming) = test_connection(relay);
+            let health = Arc::clone(&connection.health);
+            let (_outgoing, queue) = channel(1);
+            let client = tokio::spawn(connection.run(queue));
+            let mut socket = sockets.recv().await.unwrap().into_streaming();
+            let subscription = socket.next().await.unwrap();
+            for expected_ping in 1_u64..=3 {
+                advance_time(PING_INTERVAL).await;
+                let ping = socket.next().await.unwrap();
+                assert_eq!(ping.opcode(), OpCode::Ping);
+                assert_eq!(ping.payload().as_ref(), expected_ping.to_be_bytes());
+                // Flush yawc's automatic pong before an event, so receiving
+                // the event confirms the client has processed the pong too.
+                let event = EventBuilder::new(Kind::NostrConnect, "encrypted request")
+                    .finalize(&Keys::generate())
+                    .unwrap();
+                socket
+                    .send(Frame::text(
+                        RelayMessage::event(SubscriptionId::new("heartbeat-test"), event.clone())
+                            .as_json(),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(incoming.recv().await.unwrap().id, event.id);
+                assert!(health.lock().unwrap().connected);
+                assert!(
+                    sockets.try_recv().is_err(),
+                    "healthy relay must not reconnect"
+                );
+            }
+            drop(socket);
+            wait_disconnected(&health).await;
+            advance_time(BACKOFF_START).await;
+            let mut reconnected = sockets.recv().await.unwrap().into_streaming();
+            assert_eq!(
+                reconnected.next().await.unwrap().payload(),
+                subscription.payload()
+            );
+            client.abort();
+            server.abort();
+        })
+        .await
+        .expect("healthy relay and close recovery must complete");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn blocked_write_times_out() {
+        let sink = futures::sink::unfold((), |(), _: Frame| async {
+            std::future::pending::<Result<(), std::io::Error>>().await
+        });
+        futures::pin_mut!(sink);
+        assert_eq!(
+            send_frame(&mut sink, Frame::ping(Vec::new())).await,
+            Err("timed out writing to relay".to_string())
+        );
+    }
 
     struct MemoryKeys {
         identity: Keys,
