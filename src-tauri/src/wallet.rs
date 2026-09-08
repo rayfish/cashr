@@ -45,6 +45,7 @@ impl std::fmt::Display for WalletFailure {
 
 impl std::error::Error for WalletFailure {}
 
+mod receiving;
 #[cfg(test)]
 mod recovery_tests;
 
@@ -67,6 +68,67 @@ mod tests {
 
     const WORDS: &str =
         "leader monkey parrot ring guide accident before fence cannon height naive bean";
+
+    #[test]
+    fn zap_accepts_shared_note_links_and_rejects_other_nostr_entities() {
+        use nostr::nips::nip19::{FromBech32, Nip19Event, ToBech32};
+        let link = "nevent1qvzqqqqqqypzpra3gz6w3h00jl8yhqsay3e83gdyx5ekyc3lvsppfp9nwtu5sqqvqy88wumn8ghj7mn0wvhxcmmv9uq3zamnwvaz7tmwdaehgu3wd3skuep0qqs8px8jtzn8kaz3mthwrwej5d9cf4ww8tk6vjctrlujm8vu9kmm3qqfnx5nn";
+        let recipient = nostr::key::PublicKey::parse(
+            "npub137c5pd8gmhhe0njtsgwjgunc5xjr2vmzvglkgqs5sjeh972gqqxqjak37w",
+        )
+        .unwrap();
+        let event = Nip19Event::from_bech32(link).unwrap();
+        assert_eq!(event.author, Some(recipient));
+        for value in [
+            link.to_string(),
+            format!("nostr:{link}"),
+            event.event_id.to_bech32().unwrap(),
+            event.event_id.to_hex(),
+        ] {
+            assert_eq!(zap_note(&value).unwrap(), Some(event.event_id));
+        }
+        assert_eq!(zap_note(" ").unwrap(), None);
+        assert!(zap_note(&recipient.to_bech32().unwrap()).is_err());
+        assert!(zap_note("nevent1broken").is_err());
+    }
+
+    #[test]
+    fn mint_directory_filters_unsupported_offline_and_thinly_reviewed_mints() {
+        use serde_json::json;
+        let mint = json!({"url":"https://mint.example","name":"Example","type":"cashu","status":"online","review_count":20,"rating_avg":4.8,"score":4.5,"capabilities":{"mintDisabled":false,"meltDisabled":false,"mintPublished":true,"meltPublished":true}});
+        let mut entries = vec![mint.clone()];
+        for (field, value) in [
+            ("type", json!("fedimint")),
+            ("status", json!("offline")),
+            ("review_count", json!(1)),
+            ("rating_avg", json!(3)),
+            ("url", json!("http://unsafe.example")),
+        ] {
+            let mut other = mint.clone();
+            other[field] = value;
+            entries.push(other);
+        }
+        let mut paused = mint.clone();
+        paused["url"] = json!("https://paused.example");
+        paused["capabilities"]["mintDisabled"] = json!(true);
+        entries.push(paused);
+        let mut best = mint;
+        best["url"] = json!("https://best.example");
+        best["score"] = json!(4.7);
+        entries.push(best);
+        let ranked = rated_mints(&json!(entries));
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].url, "https://best.example");
+        assert_eq!(ranked[1].reviews, 20);
+    }
+
+    #[tokio::test]
+    #[ignore = "read-only live mint directory API check"]
+    async fn live_mint_directory_contract() {
+        let mints = wallet_mint_directory().await.unwrap();
+        assert!(mints.len() > 1);
+        assert!(mints.iter().any(|mint| mint.url == MINT));
+    }
 
     #[test]
     fn one_phrase_recovers_cashu_and_the_nip06_identity() {
@@ -395,6 +457,7 @@ struct TransactionView {
     direction: String,
     status: String,
     timestamp: u64,
+    error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -619,8 +682,28 @@ async fn open_path(path: PathBuf, identity_seed: &[u8; 64], imported: bool) -> R
 }
 
 async fn view(wallet: &Wallet) -> Result<WalletView> {
-    let mut transactions = wallet.list_transactions(None).await?;
-    transactions.sort_by_key(|tx| std::cmp::Reverse(tx.timestamp));
+    let transactions = receiving::history(wallet.list_transactions(None).await?);
+    let mut history = Vec::new();
+    for tx in transactions.into_iter().take(30) {
+        let error = if tx.direction == cdk::wallet::types::TransactionDirection::Incoming
+            && tx.status == cdk::wallet::types::TransactionStatus::Failed
+        {
+            match &tx.quote_id {
+                Some(id) => receiving::message(wallet, id).await?,
+                None => None,
+            }
+        } else {
+            None
+        };
+        history.push(TransactionView {
+            amount: tx.amount.into(),
+            fee: tx.fee.into(),
+            direction: format!("{:?}", tx.direction),
+            status: format!("{:?}", tx.status),
+            timestamp: tx.timestamp,
+            error,
+        });
+    }
     Ok(WalletView {
         lightning_address: crate::npubcash::saved(wallet).await?,
         receiving_error: crate::npubcash::failed(wallet, None).await?,
@@ -637,17 +720,7 @@ async fn view(wallet: &Wallet) -> Result<WalletView> {
         balance: wallet.total_balance().await?.into(),
         pending: (wallet.total_pending_balance().await? + wallet.total_reserved_balance().await?)
             .into(),
-        transactions: transactions
-            .into_iter()
-            .take(30)
-            .map(|tx| TransactionView {
-                amount: tx.amount.into(),
-                fee: tx.fee.into(),
-                direction: format!("{:?}", tx.direction),
-                status: format!("{:?}", tx.status),
-                timestamp: tx.timestamp,
-            })
-            .collect(),
+        transactions: history,
     })
 }
 
@@ -686,6 +759,7 @@ pub async fn wallet_open(
     state: State<'_, AppState>,
     service: State<'_, WalletService>,
     account: i64,
+    retry_receiving: Option<bool>,
 ) -> Result<WalletView, String> {
     let _guard = service.gate.lock().await;
     async {
@@ -702,23 +776,28 @@ pub async fn wallet_open(
             .finalize_pending_melts()
             .await
             .context(WalletFailure::Sync)?;
-        wallet
-            .mint_unissued_quotes()
-            .await
-            .context(WalletFailure::Sync)?;
-        refresh_receiving(&wallet, &state, AccountId::new(account)).await;
+        refresh_receiving(
+            &wallet,
+            &state,
+            AccountId::new(account),
+            retry_receiving.unwrap_or(false),
+        )
+        .await;
         view(&wallet).await.context(WalletFailure::Storage)
     }
     .await
     .map_err(error)
 }
 
-async fn refresh_receiving(wallet: &Wallet, state: &AppState, account: AccountId) -> u64 {
-    let result: Result<u64> = async {
+async fn refresh_receiving(
+    wallet: &Wallet,
+    state: &AppState,
+    account: AccountId,
+    manual: bool,
+) -> u64 {
+    let result: Result<()> = async {
         crate::npubcash::discover(wallet, state, account).await?;
-        // Existing provider payments may predate Cashr's quote-locking setup.
-        // Collect those too, without changing where future payments are routed.
-        let amount = crate::npubcash::collect(wallet, state, account).await?;
+        crate::npubcash::sync(wallet, state, account).await?;
         if let Some(address) = crate::npubcash::saved(wallet).await? {
             let existing = state.storage.account(account)?.lightning_address;
             if existing
@@ -730,11 +809,14 @@ async fn refresh_receiving(wallet: &Wallet, state: &AppState, account: AccountId
                     .set_lightning_address(account, Some(&address.address))?;
             }
         }
-        Ok(amount)
+        Ok(())
     }
     .await;
     let _ = crate::npubcash::failed(wallet, Some(result.is_err())).await;
-    result.unwrap_or(0)
+    // A provider outage must not block collection of quotes already saved.
+    receiving::collect(wallet, manual, || state.session.vault().holds(account))
+        .await
+        .unwrap_or(0)
 }
 
 #[tauri::command]
@@ -748,7 +830,7 @@ pub async fn wallet_enable_address(
     async {
         let wallet = open(&app, &state, account).await?;
         crate::npubcash::enable(&wallet, &state, AccountId::new(account)).await?;
-        refresh_receiving(&wallet, &state, AccountId::new(account)).await;
+        refresh_receiving(&wallet, &state, AccountId::new(account), false).await;
         view(&wallet).await
     }
     .await
@@ -788,7 +870,7 @@ pub fn start_receiving(app: &AppHandle) {
                         .await?;
                         // Discovery also recovers the address after importing the phrase.
                         let before = crate::npubcash::saved(&wallet).await?.map(|a| a.address);
-                        let amount = refresh_receiving(&wallet, &state, account.id).await;
+                        let amount = refresh_receiving(&wallet, &state, account.id, false).await;
                         let after = crate::npubcash::saved(&wallet).await?.map(|a| a.address);
                         if amount > 0 || before != after {
                             let _ = app.emit("wallet://received", account.id.get());
@@ -1132,6 +1214,25 @@ async fn get_json(url: url::Url) -> Result<serde_json::Value> {
     Ok(serde_json::from_slice(&bytes)?)
 }
 
+fn zap_note(value: &str) -> Result<Option<nostr::event::EventId>> {
+    use nostr::event::EventId;
+    use nostr::nips::nip19::{FromBech32, Nip19};
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    ensure!(value.len() <= 8192, "Nostr link too long");
+    let value = value.strip_prefix("nostr:").unwrap_or(value);
+    if let Ok(id) = EventId::from_hex(value) {
+        return Ok(Some(id));
+    }
+    match Nip19::from_bech32(value)? {
+        Nip19::EventId(id) => Ok(Some(id)),
+        Nip19::Event(event) => Ok(Some(event.event_id)),
+        _ => bail!("Use a note or event link"),
+    }
+}
+
 #[tauri::command]
 pub async fn wallet_zap(
     app: AppHandle,
@@ -1169,7 +1270,8 @@ pub async fn wallet_zap(
     {
         return Err("Enter a valid Lightning address.".into());
     }
-    let note = note.trim();
+    let note =
+        zap_note(&note).map_err(|_| "Enter a note1… or nevent1… link, or a hex event ID.")?;
     let _guard = service.gate.lock().await;
     let epoch = service.epoch.load(Ordering::SeqCst);
     async {
@@ -1206,12 +1308,8 @@ pub async fn wallet_zap(
         relays.extend(identity.relays.iter().map(ToString::to_string));
         ensure!(relays.len() > 1, "configure a relay before zapping");
         tags.push(Tag::parse(relays)?);
-        if !note.is_empty() {
-            ensure!(
-                note.len() == 64 && note.bytes().all(|c| c.is_ascii_hexdigit()),
-                "use a hex note event id"
-            );
-            tags.push(Tag::parse(["e", note])?);
+        if let Some(note) = note {
+            tags.push(Tag::parse(["e", &note.to_hex()])?);
         }
         let unsigned = EventBuilder::new(Kind::from_u16(9734), "")
             .tags(tags)
@@ -1378,6 +1476,82 @@ pub async fn wallet_list(
         })
     })()
     .map_err(error)
+}
+
+#[derive(Serialize)]
+pub struct RatedMint {
+    url: String,
+    name: String,
+    rating: f64,
+    reviews: u64,
+}
+
+fn rated_mints(value: &serde_json::Value) -> Vec<RatedMint> {
+    let mut rows = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for mint in value.as_array().into_iter().flatten() {
+        if mint["type"] != "cashu"
+            || mint["status"] != "online"
+            || mint["capabilities"]["mintDisabled"] != false
+            || mint["capabilities"]["meltDisabled"] != false
+            || mint["capabilities"]["mintPublished"] != true
+            || mint["capabilities"]["meltPublished"] != true
+        {
+            continue;
+        }
+        let Some(reviews) = mint["review_count"].as_u64().filter(|n| *n >= 5) else {
+            continue;
+        };
+        let Some(rating) = mint["rating_avg"]
+            .as_f64()
+            .filter(|r| (4.5..=5.0).contains(r))
+        else {
+            continue;
+        };
+        let Some(score) = mint["score"].as_f64().filter(|r| (0.0..=5.0).contains(r)) else {
+            continue;
+        };
+        let Ok(url) = import_mint(mint["url"].as_str().unwrap_or_default()) else {
+            continue;
+        };
+        if !seen.insert(url.clone()) {
+            continue;
+        }
+        let name = mint["name"]
+            .as_str()
+            .unwrap_or(&url)
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(80)
+            .collect();
+        rows.push((
+            score,
+            RatedMint {
+                url,
+                name,
+                rating,
+                reviews,
+            },
+        ));
+    }
+    // The directory's score weights community ratings by the review count.
+    rows.sort_by(|a, b| {
+        b.0.total_cmp(&a.0)
+            .then_with(|| b.1.reviews.cmp(&a.1.reviews))
+            .then_with(|| a.1.url.cmp(&b.1.url))
+    });
+    rows.into_iter().take(9).map(|(_, mint)| mint).collect()
+}
+
+#[tauri::command]
+pub async fn wallet_mint_directory() -> Result<Vec<RatedMint>, String> {
+    let value = get_json(url::Url::parse("https://cashumints.space/api/mints").unwrap())
+        .await
+        .map_err(|_| "Could not load mint ratings.")?;
+    if !value.is_array() {
+        return Err("Could not load mint ratings.".into());
+    }
+    Ok(rated_mints(&value))
 }
 
 #[tauri::command]

@@ -314,7 +314,7 @@ fn validate_quote(value: &Value, mint: &str) -> Result<bool> {
 
 /// Fetch every page, persist each quote before minting, and retain CDK's issued
 /// state. No destructive provider claim endpoint or incremental cursor is used.
-pub async fn collect(wallet: &Wallet, state: &AppState, account: AccountId) -> Result<u64> {
+pub async fn sync(wallet: &Wallet, state: &AppState, account: AccountId) -> Result<()> {
     check_identity(wallet, state, account)?;
     sync_quotes(wallet, |offset| async move {
         request(
@@ -327,10 +327,7 @@ pub async fn collect(wallet: &Wallet, state: &AppState, account: AccountId) -> R
         .await
     })
     .await?;
-    // Auth could have been locked while fetching. Finish a mint request once
-    // started, but do not begin one with a locked identity.
-    state.session.vault().identity_public_key(account)?;
-    Ok(wallet.mint_unissued_quotes().await?.into())
+    Ok(())
 }
 
 async fn sync_quotes<F: std::future::Future<Output = Result<Value>>>(

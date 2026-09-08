@@ -72,9 +72,21 @@ Use **Choose mint** to enter another HTTPS mint URL or return to a saved mint.
 Each mint keeps its own balance, history, and pending payments, using the same
 wallet seed. Changing mints does not move funds. The mint holds the bitcoin
 backing your tokens. Deposits and Lightning payments are limited to 10,000 sats.
-Pay funding invoices from another wallet, then **Refresh** to claim tokens.
-Refresh also reconciles pending payments after interruptions; a timeout does
+Paid funding invoices are claimed automatically while unlocked. **Refresh**
+also reconciles pending payments after interruptions; a timeout does
 not mean a payment failed.
+
+Incoming collection retries use persistent backoff. Definitive mint rejections
+wait for an explicit **Refresh**; repeated failed attempts appear as one history
+entry with a concise error. Saved transaction records remain intact. The zap
+form accepts hex event IDs, `note1…`, `nevent1…`, and `nostr:` note links.
+
+**Choose mint** keeps Minibits first and loads community recommendations from
+[Cashumints.space](https://cashumints.space/mints). It shows online Cashu mints
+with minting and melting enabled, at least five reviews, and an average rating
+of 4.5 or higher, ordered by the directory's weighted score. Ratings and review
+counts appear on each row; they are community opinions. Picking a row selects
+that mint, while **Add mint** accepts any supported mint URL.
 
 **Wallet → Nostr → Connect for zaps** creates an NWC connection for the selected
 wallet and mint. Copy its link into Jumble's **Wallet → Connect wallet via NWC**.

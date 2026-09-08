@@ -775,3 +775,7 @@ textarea { resize: vertical; }
 #wallet-refresh.is-loading .glyph { animation: wallet-refresh-spin 1s linear infinite; }
 @keyframes wallet-refresh-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { #wallet-refresh.is-loading .glyph { animation: none; } }
+.mint-description { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.mint-rating { color: var(--muted); font-size: 11px; }
+.mint-directory-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 0 4px; font-size: 11px; color: var(--muted); }
+.mint-directory-heading a { color: inherit; }

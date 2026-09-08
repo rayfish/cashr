@@ -7,6 +7,7 @@ window.WalletUI = (() => {
   let backupGeneration = 0, backupTimer;
   let exposureGeneration = 0, sharedOperation = null, incomingRevision = 0;
   let retryTimer, retryDelay = 2000;
+  let mintChoices = { wallets: [] }, mintDirectory = [], directoryLoaded = 0, directoryBusy = false;
   const loadCommands = new Set(['wallet_open', 'wallet_select', 'wallet_set_mint', 'wallet_restore']);
   const retryableErrors = new Set(['Mint sync failed. Retrying…', 'Fund recovery interrupted. Retrying…']);
 
@@ -141,6 +142,7 @@ window.WalletUI = (() => {
     $('scroll').scrollTop = 0;
     if (name === 'receive' && $('wallet-invoice').value) drawQR($('wallet-invoice').value, 'wallet-invoice');
     controls();
+    if (name === 'mint') loadMintDirectory();
   }
 
   function sync(selected, isUnlocked) {
@@ -210,7 +212,7 @@ window.WalletUI = (() => {
       const meta = document.createElement('div');
       meta.className = 'transaction-meta';
       const status = document.createElement('span');
-      status.textContent = `${tx.status} · Fee ${tx.fee} sats`;
+      status.textContent = tx.error || `${tx.status} · Fee ${tx.fee} sats`;
       const date = document.createElement('span');
       date.textContent = new Date(tx.timestamp * 1000).toLocaleString();
       meta.append(status, date);
@@ -244,6 +246,7 @@ window.WalletUI = (() => {
   }
 
   function renderMints(list) {
+    mintChoices = list;
     const revision = generation;
     const picker = $('wallet-picker');
     picker.replaceChildren();
@@ -253,7 +256,18 @@ window.WalletUI = (() => {
     }
     if (!saved.has(DEFAULT_MINT)) saved.set(DEFAULT_MINT, { label: DEFAULT_MINT });
     const mints = [...saved.values()].sort((a, b) => a.label === DEFAULT_MINT ? -1 : b.label === DEFAULT_MINT ? 1 : a.label.localeCompare(b.label));
+    const recommendations = mintDirectory.filter(mint => !saved.has(mint.url));
+    mints.push(...recommendations.map(mint => ({ label: mint.url, suggested: true })));
+    let heading = false;
     for (const mint of mints) {
+      if (mint.suggested && !heading) {
+        const title = document.createElement('div'); title.className = 'mint-directory-heading';
+        const label = document.createElement('span'); label.textContent = 'Top rated';
+        const source = document.createElement('a'); source.textContent = 'Cashumints.space';
+        source.href = 'https://cashumints.space/mints'; source.target = '_blank'; source.rel = 'noreferrer';
+        title.append(label, source); picker.append(title); heading = true;
+      }
+      const rated = mintDirectory.find(row => row.url === mint.label);
       const button = document.createElement('button');
       button.className = 'mint-row';
       button.type = 'button';
@@ -262,7 +276,15 @@ window.WalletUI = (() => {
       button.setAttribute('aria-pressed', String(selected));
       button.disabled = busy || !unlocked;
       const name = document.createElement('span');
-      name.textContent = mint.label === DEFAULT_MINT ? 'Minibits' : mint.label.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      name.className = 'mint-description';
+      const title = document.createElement('span');
+      title.textContent = mint.label === DEFAULT_MINT ? 'Minibits' : rated?.name || mint.label.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      name.append(title);
+      if (rated) {
+        const rating = document.createElement('span'); rating.className = 'mint-rating';
+        rating.textContent = `${rated.rating.toFixed(1)} / 5 · ${rated.reviews} reviews`;
+        name.append(rating);
+      }
       const mark = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       mark.setAttribute('class', 'glyph'); mark.setAttribute('viewBox', '0 0 24 24');
       mark.setAttribute('fill', 'none'); mark.setAttribute('stroke', 'currentColor');
@@ -284,6 +306,21 @@ window.WalletUI = (() => {
       picker.append(button);
     }
     picker.hidden = currentView !== 'mint';
+  }
+
+  async function loadMintDirectory(force = false) {
+    if (directoryBusy || (!force && directoryLoaded && Date.now() - directoryLoaded < 300000)) return;
+    const revision = generation;
+    directoryBusy = true;
+    $('wallet-mints-retry').hidden = true;
+    try {
+      const rows = await invoke('wallet_mint_directory');
+      if (!Array.isArray(rows)) throw new Error('Invalid mint directory');
+      mintDirectory = rows; directoryLoaded = Date.now();
+      if (revision === generation && currentView === 'mint') renderMints(mintChoices);
+    } catch {
+      if (revision === generation && currentView === 'mint') $('wallet-mints-retry').hidden = false;
+    } finally { directoryBusy = false; controls(); }
   }
 
   async function loadConnections() {
@@ -367,6 +404,7 @@ window.WalletUI = (() => {
 
   function init(call) {
     invoke = call;
+    $('wallet-mints-retry').onclick = () => loadMintDirectory(true);
     $('wallet-address-enable').onclick = () => run('wallet_enable_address');
     $('wallet-address-show').onclick = () => drawQR($('wallet-address-value').value, 'wallet-address');
     $('wallet-address-copy').onclick = async () => {
@@ -377,7 +415,7 @@ window.WalletUI = (() => {
       catch { if (revision === generation) $('wallet-address-status').textContent = 'Select and copy the address.'; }
     };
     for (const id of ['wallet-request', 'wallet-send-amount', 'wallet-zap-address', 'wallet-zap-recipient', 'wallet-zap-amount', 'wallet-zap-note']) $(id).oninput = clearReview;
-    $('wallet-open').onclick = $('wallet-refresh').onclick = () => { clearReview(); return run('wallet_open'); };
+    $('wallet-open').onclick = $('wallet-refresh').onclick = () => { clearReview(); return run('wallet_open', { retryReceiving: true }); };
     const submit = (id, action) => { $(id).onsubmit = event => { event.preventDefault(); action(); }; };
     for (const view of ['receive', 'send', 'zap', 'nostr']) $('wallet-show-' + view).onclick = () => show(view);
     $('wallet-flow-back').onclick = () => show('home');

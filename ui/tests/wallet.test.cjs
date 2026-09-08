@@ -372,8 +372,8 @@ test('mints are clickable saved choices with Minibits, and refresh leaves no suc
   view.ui.show('mint');
   const rows = view.get('wallet-picker').children;
   assert.equal(rows.length, 2);
-  assert.equal(rows[0].children[0].textContent, 'Minibits');
-  assert.equal(rows[1].children[0].textContent, 'mint.example');
+  assert.equal(rows[0].children[0].children[0].textContent, 'Minibits');
+  assert.equal(rows[1].children[0].children[0].textContent, 'mint.example');
   assert.equal(rows[1]['aria-pressed'], 'true');
   await rows[0].onclick();
   assert.equal(view.calls.findLast(c => c.command === 'wallet_select').args.slot, 'original');
@@ -383,4 +383,31 @@ test('mints are clickable saved choices with Minibits, and refresh leaves no suc
   assert.equal(view.get('wallet-mint-url').value, '');
   view.get('wallet-mint-cancel').onclick();
   assert.equal(view.get('wallet-mint-form').hidden, true);
+});
+
+test('rated mints load without selecting one and selection requires a click', async () => {
+  const view = app(command => {
+    if (command === 'wallet_mint_directory') return [{url:'https://rated.example',name:'Rated Mint',rating:4.9,reviews:25}];
+    if (command === 'wallet_list') return {active:'original',wallets:[{id:'original',label:'https://mint.minibits.cash/Bitcoin'}]};
+    return balance;
+  });
+  await view.ui.open();
+  view.ui.show('mint');
+  await new Promise(resolve => setImmediate(resolve));
+  const rows = view.get('wallet-picker').children.filter(node => node.className === 'mint-row');
+  assert.equal(rows.length,2);
+  assert.equal(rows[1].children[0].children[0].textContent,'Rated Mint');
+  assert.equal(rows[1].children[0].children[1].textContent,'4.9 / 5 · 25 reviews');
+  assert.equal(view.calls.filter(c => c.command === 'wallet_set_mint').length,0);
+  await rows[1].onclick();
+  assert.equal(view.calls.find(c => c.command === 'wallet_set_mint').args.mint,'https://rated.example');
+});
+
+test('only an explicit refresh overrides receiving backoff and mint errors remain visible', async () => {
+  const view = app(async () => ({...balance,transactions:[{direction:'Incoming',amount:100000,status:'Failed',fee:0,timestamp:1,error:'Mint rejected the collection signature.'}]}));
+  await view.ui.open();
+  assert.equal(view.calls.find(c=>c.command==='wallet_open').args.retryReceiving,undefined);
+  assert.equal(view.get('wallet-history').children[0].children[1].children[0].textContent,'Mint rejected the collection signature.');
+  await view.get('wallet-refresh').onclick();
+  assert.equal(view.calls.findLast(c=>c.command==='wallet_open').args.retryReceiving,true);
 });

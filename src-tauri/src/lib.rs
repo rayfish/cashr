@@ -176,6 +176,7 @@ pub fn run() -> Result<()> {
             commands::set_lightning_address,
             commands::find_lightning_address,
             wallet::wallet_enable_address,
+            wallet::wallet_mint_directory,
             commands::set_relays,
             commands::relay_health,
             commands::pair_bunker,

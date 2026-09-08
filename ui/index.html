@@ -66,6 +66,7 @@
         <button id="wallet-flow-back" class="back" hidden><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#arrow-left" /></svg> Wallet</button>
         <section id="wallet-mint-section" class="card stack wallet-flow" data-wallet-view="mint" hidden><h2 class="wallet-flow-heading">Choose mint</h2>
           <div id="wallet-picker" class="mint-list" role="group" aria-label="Mints"></div>
+          <button id="wallet-mints-retry" type="button" hidden>Retry ratings</button>
           <button id="wallet-mint-add" type="button"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg> Add mint</button>
           <form id="wallet-mint-form" class="stack" hidden>
             <label for="wallet-mint-url" class="sr-only">Mint URL</label>
@@ -134,7 +135,7 @@
               <label for="wallet-zap-address">Recipient’s Lightning address</label><input id="wallet-zap-address" placeholder="alice@example.com" required />
               <label for="wallet-zap-recipient">Recipient’s Nostr public key</label><input id="wallet-zap-recipient" placeholder="npub1…" required />
               <label for="wallet-zap-amount">Amount in sats</label><input id="wallet-zap-amount" type="number" min="1" max="10000" step="1" value="21" required />
-              <label for="wallet-zap-note">Note event ID (optional, hex)</label><input id="wallet-zap-note" />
+              <label for="wallet-zap-note">Note (optional)</label><input id="wallet-zap-note" placeholder="note1… or nevent1…" maxlength="8192" spellcheck="false" />
 
               <button type="submit">Prepare zap</button>
             </form>
