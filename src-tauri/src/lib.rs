@@ -81,6 +81,7 @@ pub fn run() -> Result<()> {
             )?;
             app.manage(state);
             app.manage(nwc::NwcService::new(&handle)?);
+            nwc::install_notifications(&handle);
             handle.state::<nwc::NwcService>().start(&handle)?;
             wallet::start_receiving(&handle);
 

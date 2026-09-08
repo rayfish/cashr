@@ -9,6 +9,7 @@ use crate::{
     window,
 };
 use anyhow::{ensure, Result};
+use macos_native::notifications::{self, PaymentAction, PaymentNotification, PaymentPrompt};
 use nostr::{
     event::Event,
     key::{Keys, PublicKey},
@@ -37,6 +38,7 @@ pub struct NwcService {
 struct Waiting {
     prompt: Prompt,
     answer: oneshot::Sender<bool>,
+    _notification: PaymentNotification,
 }
 #[derive(Clone, Serialize)]
 pub struct Prompt {
@@ -66,6 +68,29 @@ impl NwcService {
     pub fn pending_count(&self) -> usize {
         self.waiting.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
+
+    fn answer(
+        &self,
+        id: &str,
+        allow: bool,
+        unlocked: impl FnOnce(i64) -> bool,
+    ) -> Result<(), String> {
+        let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        let item = waiting.get(id).ok_or("Request expired.")?;
+        if allow {
+            if !unlocked(item.prompt.account) {
+                return Err("Unlock this wallet first.".into());
+            }
+            if now() >= item.prompt.expiry || !self.store.active(&item.prompt.connection) {
+                return Err("Request expired or connection revoked.".into());
+            }
+        }
+        let item = waiting.remove(id).ok_or("Request expired.")?;
+        item.answer
+            .send(allow)
+            .map_err(|_| "Request expired.".into())
+    }
+
     pub fn start(&self, app: &AppHandle) -> Result<()> {
         for pairing in self.store.list()? {
             // Account deletion makes all of its old connections unusable.
@@ -275,20 +300,48 @@ pub fn nwc_answer(
     id: String,
     allow: bool,
 ) -> Result<(), String> {
-    let mut waiting = service.waiting.lock().unwrap_or_else(|e| e.into_inner());
-    let item = waiting.get(&id).ok_or("Request expired.")?;
-    if allow
-        && !state
-            .session
-            .vault()
-            .holds(AccountId::new(item.prompt.account))
-    {
-        return Err("Unlock this wallet first.".into());
+    service.answer(&id, allow, |account| {
+        state.session.vault().holds(AccountId::new(account))
+    })
+}
+
+pub fn install_notifications(app: &AppHandle) {
+    let app = app.clone();
+    notifications::install_payment_handler(move |id, action| {
+        if action == PaymentAction::Open {
+            window::show(&app);
+            return;
+        }
+        if nwc_answer(
+            app.state::<NwcService>(),
+            app.state::<AppState>(),
+            id.into(),
+            action == PaymentAction::Approve,
+        )
+        .is_err()
+        {
+            window::show(&app);
+        }
+        let _ = app.emit("nwc://changed", ());
+    });
+}
+
+/// Also clears the prompt and notification if the relay task is cancelled.
+struct PendingPayment<'a> {
+    service: &'a NwcService,
+    app: &'a AppHandle,
+    id: &'a str,
+}
+
+impl Drop for PendingPayment<'_> {
+    fn drop(&mut self) {
+        self.service
+            .waiting
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(self.id);
+        let _ = self.app.emit("nwc://changed", ());
     }
-    let item = waiting.remove(&id).ok_or("Request expired.")?;
-    item.answer
-        .send(allow)
-        .map_err(|_| "Request expired.".into())
 }
 
 struct RequestGuard<'a> {
@@ -492,11 +545,30 @@ async fn pay(
         expiry,
     };
     let (answer, result) = oneshot::channel();
-    service
-        .waiting
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(id.into(), Waiting { prompt, answer });
+    {
+        let mut waiting = service.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        let notification = notifications::notify_payment(PaymentPrompt {
+            id,
+            app: &prompt.app,
+            account: &prompt.account_label,
+            amount: prompt.amount,
+            max_fee: prompt.max_fee,
+            maximum: prompt.maximum,
+        });
+        waiting.insert(
+            id.into(),
+            Waiting {
+                prompt,
+                answer,
+                _notification: notification,
+            },
+        );
+    }
+    let pending = PendingPayment {
+        service: &service,
+        app,
+        id,
+    };
     let _ = app.emit("nwc://changed", ());
     window::show(app);
     let approved = wait_for_approval(
@@ -508,12 +580,7 @@ async fn pay(
         },
     )
     .await;
-    service
-        .waiting
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(id);
-    let _ = app.emit("nwc://changed", ());
+    drop(pending);
     if !approved {
         wallet::cancel_review(&wallet, &review.quote);
         return failure(
@@ -606,6 +673,93 @@ async fn wait_for_approval(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn payment_answers_check_unlock_expiry_and_revocation_and_resolve_once() {
+        let root = tempfile::tempdir().unwrap();
+        let service = NwcService {
+            store: Store::open(&root.path().join("nwc.sqlite")).unwrap(),
+            tasks: Mutex::new(HashMap::new()),
+            waiting: Mutex::new(HashMap::new()),
+            limit: Arc::new(Semaphore::new(16)),
+            active_requests: Mutex::new(HashSet::new()),
+        };
+        service
+            .store
+            .add(&Pairing {
+                id: "connection".into(),
+                account: 1,
+                label: "Test app".into(),
+                mint: "https://mint.example".into(),
+                relay: "wss://relay.example".into(),
+                client: "client".into(),
+                wallet: "wallet".into(),
+                created: now(),
+                info: "{}".into(),
+            })
+            .unwrap();
+        let enqueue = |id: &str, expiry| {
+            let (answer, result) = oneshot::channel();
+            let notification = notifications::notify_payment(PaymentPrompt {
+                id,
+                app: "Test app",
+                account: "Wallet",
+                amount: 100,
+                max_fee: 2,
+                maximum: 102,
+            });
+            service.waiting.lock().unwrap().insert(
+                id.into(),
+                Waiting {
+                    prompt: Prompt {
+                        id: id.into(),
+                        connection: "connection".into(),
+                        account: 1,
+                        account_label: "Wallet".into(),
+                        app: "Test app".into(),
+                        mint: "https://mint.example".into(),
+                        amount: 100,
+                        max_fee: 2,
+                        maximum: 102,
+                        destination: "payee".into(),
+                        expiry,
+                    },
+                    answer,
+                    _notification: notification,
+                },
+            );
+            result
+        };
+
+        let mut result = enqueue("approved", now() + 120);
+        assert!(service.answer("approved", true, |_| false).is_err());
+        assert_eq!(result.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+        service
+            .answer("approved", true, |account| account == 1)
+            .unwrap();
+        assert_eq!(result.try_recv(), Ok(true));
+        assert!(service.answer("approved", true, |_| true).is_err());
+        assert_eq!(service.pending_count(), 0);
+
+        let mut result = enqueue("declined", now() + 120);
+        service.answer("declined", false, |_| false).unwrap();
+        assert_eq!(result.try_recv(), Ok(false));
+
+        let mut result = enqueue("expired", now());
+        assert!(service.answer("expired", true, |_| true).is_err());
+        assert_eq!(result.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+        service.answer("expired", false, |_| true).unwrap();
+        assert_eq!(result.try_recv(), Ok(false));
+
+        let mut result = enqueue("revoked", now() + 120);
+        service.store.revoke("connection", 1).unwrap();
+        assert!(service.answer("revoked", true, |_| true).is_err());
+        assert_eq!(result.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+        service.remove_account(1).unwrap();
+        assert_eq!(service.pending_count(), 0);
+        assert_eq!(result.try_recv(), Err(oneshot::error::TryRecvError::Closed));
+    }
+
     #[test]
     fn namespace_migration_preserves_connection_keys_encrypted() {
         use nostr::nips::nip44::Nip44;

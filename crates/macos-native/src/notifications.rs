@@ -155,6 +155,54 @@ pub const CATEGORY: &str = "SIGN_REQUEST";
 pub const ACTION_APPROVE: &str = "APPROVE";
 pub const ACTION_ALWAYS: &str = "ALWAYS_ALLOW";
 pub const ACTION_REJECT: &str = "REJECT";
+#[cfg(target_os = "macos")]
+const PAYMENT_CATEGORY: &str = "PAYMENT_REQUEST";
+#[cfg(any(target_os = "macos", test))]
+const ACTION_PAY: &str = "APPROVE_PAYMENT";
+#[cfg(any(target_os = "macos", test))]
+const ACTION_DECLINE: &str = "DECLINE_PAYMENT";
+
+/// Payment actions never create a saved permission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaymentAction {
+    Approve,
+    Decline,
+    Open,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn payment_action(action: &str) -> Option<PaymentAction> {
+    match action {
+        ACTION_PAY => Some(PaymentAction::Approve),
+        ACTION_DECLINE => Some(PaymentAction::Decline),
+        "com.apple.UNNotificationDefaultActionIdentifier" => Some(PaymentAction::Open),
+        _ => None,
+    }
+}
+
+pub struct PaymentPrompt<'a> {
+    pub id: &'a str,
+    pub app: &'a str,
+    pub account: &'a str,
+    pub amount: u64,
+    pub max_fee: u64,
+    pub maximum: u64,
+}
+
+/// Owned by the pending payment so answering, revoking or cancelling it also
+/// removes its notification.
+pub struct PaymentNotification(String);
+
+impl Drop for PaymentNotification {
+    fn drop(&mut self) {
+        platform::withdraw_payment(&self.0);
+    }
+}
+
+pub fn notify_payment(prompt: PaymentPrompt<'_>) -> PaymentNotification {
+    platform::post_payment(&prompt);
+    PaymentNotification(format!("payment:{}", prompt.id))
+}
 
 /// Identifier of the "the signer is locked" notice.
 ///
@@ -188,10 +236,10 @@ mod platform {
     use objc2::{define_class, msg_send, AllocAnyThread};
     use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol, NSSet, NSString};
     use objc2_user_notifications::{
-        UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationAction,
+        UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationAction,
         UNNotificationActionOptions, UNNotificationCategory, UNNotificationCategoryOptions,
-        UNNotificationRequest, UNNotificationResponse, UNUserNotificationCenter,
-        UNUserNotificationCenterDelegate,
+        UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
+        UNUserNotificationCenter, UNUserNotificationCenterDelegate,
     };
     use signer_core::approval::{ApprovalDecision, ApprovalRequest};
     use std::sync::Arc;
@@ -200,9 +248,16 @@ mod platform {
         NotificationApprover, RequestId, ACTION_ALWAYS, ACTION_APPROVE, ACTION_REJECT, CATEGORY,
         LOCKED,
     };
+    use super::{PaymentAction, PaymentPrompt, ACTION_DECLINE, ACTION_PAY, PAYMENT_CATEGORY};
 
     static APPROVER: OnceLock<Arc<NotificationApprover>> = OnceLock::new();
     static DELEGATE: OnceLock<Retained<ResponseHandler>> = OnceLock::new();
+    type PaymentHandler = dyn Fn(&str, PaymentAction) + Send + Sync;
+    static PAYMENT_HANDLER: OnceLock<Box<PaymentHandler>> = OnceLock::new();
+
+    pub fn install_payment_handler(handler: impl Fn(&str, PaymentAction) + Send + Sync + 'static) {
+        let _ = PAYMENT_HANDLER.set(Box::new(handler));
+    }
 
     define_class!(
         #[unsafe(super(NSObject))]
@@ -212,6 +267,17 @@ mod platform {
         unsafe impl NSObjectProtocol for ResponseHandler {}
 
         unsafe impl UNUserNotificationCenterDelegate for ResponseHandler {
+            #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
+            fn will_present(
+                &self,
+                _center: &UNUserNotificationCenter,
+                _notification: &UNNotification,
+                completion: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
+            ) {
+                completion.call((UNNotificationPresentationOptions::Banner
+                    | UNNotificationPresentationOptions::List,));
+            }
+
             #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
             fn did_receive_response(
                 &self,
@@ -232,6 +298,14 @@ mod platform {
 
         let action = response.actionIdentifier().to_string();
         let identifier = response.notification().request().identifier().to_string();
+        if let Some(id) = identifier.strip_prefix("payment:") {
+            if let (Some(handler), Some(action)) =
+                (PAYMENT_HANDLER.get(), super::payment_action(&action))
+            {
+                handler(id, action);
+            }
+            return;
+        }
         let Some(id) = RequestId::parse(&identifier) else {
             return;
         };
@@ -289,7 +363,25 @@ mod platform {
                 &NSArray::new(),
                 UNNotificationCategoryOptions::empty(),
             );
-        center.setNotificationCategories(&NSSet::from_retained_slice(&[category]));
+        let pay = UNNotificationAction::actionWithIdentifier_title_options(
+            &NSString::from_str(ACTION_PAY),
+            &NSString::from_str("Approve & pay"),
+            UNNotificationActionOptions::AuthenticationRequired,
+        );
+        let decline = UNNotificationAction::actionWithIdentifier_title_options(
+            &NSString::from_str(ACTION_DECLINE),
+            &NSString::from_str("Decline"),
+            UNNotificationActionOptions::Destructive,
+        );
+        let payment_category =
+            UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+                &NSString::from_str(PAYMENT_CATEGORY),
+                &NSArray::from_retained_slice(&[pay, decline]),
+                &NSArray::new(),
+                UNNotificationCategoryOptions::empty(),
+            );
+        center
+            .setNotificationCategories(&NSSet::from_retained_slice(&[category, payment_category]));
 
         // The delegate is kept in a `OnceLock` for the life of the process,
         // which is what `setDelegate` needs: the center does not retain it.
@@ -361,6 +453,45 @@ mod platform {
             .addNotificationRequest_withCompletionHandler(&notification, None);
     }
 
+    pub(super) fn post_payment(prompt: &PaymentPrompt<'_>) {
+        if APPROVER.get().is_none() || PAYMENT_HANDLER.get().is_none() {
+            tracing::warn!("payment notification handler is not installed");
+            return;
+        }
+        let content = UNMutableNotificationContent::new();
+        content.setTitle(&NSString::from_str(&format!(
+            "{} requests {} sats",
+            prompt.app, prompt.amount
+        )));
+        content.setBody(&NSString::from_str(&format!(
+            "Account: {} · Max fee {} sats · Total up to {} sats",
+            prompt.account, prompt.max_fee, prompt.maximum
+        )));
+        content.setCategoryIdentifier(&NSString::from_str(PAYMENT_CATEGORY));
+        let notification = UNNotificationRequest::requestWithIdentifier_content_trigger(
+            &NSString::from_str(&format!("payment:{}", prompt.id)),
+            &content,
+            None,
+        );
+        let handler = RcBlock::new(|error: *mut NSError| {
+            if !error.is_null() {
+                tracing::warn!("could not post payment notification; review it in Cashr");
+            }
+        });
+        UNUserNotificationCenter::currentNotificationCenter()
+            .addNotificationRequest_withCompletionHandler(&notification, Some(&handler));
+    }
+
+    pub(super) fn withdraw_payment(identifier: &str) {
+        if APPROVER.get().is_none() {
+            return;
+        }
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        let identifiers = NSArray::from_retained_slice(&[NSString::from_str(identifier)]);
+        center.removeDeliveredNotificationsWithIdentifiers(&identifiers);
+        center.removePendingNotificationRequestsWithIdentifiers(&identifiers);
+    }
+
     pub(super) fn clear_locked() {
         if APPROVER.get().is_none() {
             return;
@@ -376,6 +507,9 @@ mod platform {
     /// Notification Center does not keep offering a decision that goes
     /// nowhere.
     pub(super) fn withdraw(id: RequestId) {
+        if APPROVER.get().is_none() {
+            return;
+        }
         let center = UNUserNotificationCenter::currentNotificationCenter();
         let identifiers = NSArray::from_retained_slice(&[NSString::from_str(&id.to_string())]);
         center.removeDeliveredNotificationsWithIdentifiers(&identifiers);
@@ -416,6 +550,15 @@ mod platform {
     /// reads `pending()`. Nothing is posted.
     pub fn install(_approver: Arc<NotificationApprover>) {}
 
+    pub fn install_payment_handler(
+        _handler: impl Fn(&str, super::PaymentAction) + Send + Sync + 'static,
+    ) {
+    }
+
+    pub(super) fn post_payment(_prompt: &super::PaymentPrompt<'_>) {}
+
+    pub(super) fn withdraw_payment(_identifier: &str) {}
+
     pub(super) fn post(_id: RequestId, _request: &ApprovalRequest) -> Result<(), String> {
         Ok(())
     }
@@ -427,4 +570,29 @@ mod platform {
     pub(super) fn withdraw(_id: RequestId) {}
 }
 
-pub use platform::install;
+pub use platform::{install, install_payment_handler};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn payment_actions_require_explicit_payment_approval() {
+        assert_eq!(payment_action(ACTION_PAY), Some(PaymentAction::Approve));
+        assert_eq!(payment_action(ACTION_DECLINE), Some(PaymentAction::Decline));
+        assert_eq!(
+            payment_action("com.apple.UNNotificationDefaultActionIdentifier"),
+            Some(PaymentAction::Open)
+        );
+        for action in [
+            ACTION_APPROVE,
+            ACTION_ALWAYS,
+            ACTION_REJECT,
+            "",
+            "unknown",
+            "com.apple.UNNotificationDismissActionIdentifier",
+        ] {
+            assert_eq!(payment_action(action), None);
+        }
+    }
+}
