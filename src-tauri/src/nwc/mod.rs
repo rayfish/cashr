@@ -385,8 +385,27 @@ pub(super) async fn handle(
             "get_info" => success(
                 "get_info",
                 json!({"alias":"Cashr", "color":"#000000", "pubkey":pairing.wallet,
-            "network":"mainnet", "methods":["get_info","pay_invoice"], "extensions":[]}),
+            "network":"mainnet", "methods":protocol::METHODS.split_whitespace().collect::<Vec<_>>(), "extensions":[]}),
             ),
+            "get_balance" => {
+                match wallet::nwc_balance(
+                    app,
+                    &state,
+                    &app.state::<WalletService>(),
+                    pairing.account,
+                    &pairing.mint,
+                )
+                .await
+                .and_then(protocol::balance)
+                {
+                    Ok(result) => result,
+                    Err(_) => failure(
+                        "get_balance",
+                        "INTERNAL",
+                        "Could not read wallet balance. Unlock Cashr and retry.",
+                    ),
+                }
+            }
             "pay_invoice" => match protocol::payment(&request.params) {
                 Ok((invoice, hash)) => pay(app, pairing, &id, invoice, hash, deadline).await,
                 Err(_) => failure(
@@ -398,10 +417,22 @@ pub(super) async fn handle(
             other => failure(
                 other,
                 "NOT_IMPLEMENTED",
-                "This connection supports get_info and pay_invoice.",
+                "This connection supports get_info, get_balance and pay_invoice.",
             ),
         }
     };
+    // Log only known method names and outcome; never parameters or decrypted data.
+    let method = match request.method.as_str() {
+        "get_info" => "get_info",
+        "get_balance" => "get_balance",
+        "pay_invoice" => "pay_invoice",
+        _ => "unsupported",
+    };
+    tracing::info!(
+        method,
+        failed = !result["error"].is_null(),
+        "NWC request handled"
+    );
     let reply = serde_json::to_string(&protocol::response(&event, &keys, result)?)?;
     service.store.finish(&id, &reply)?;
     let _ = outgoing.send(reply);

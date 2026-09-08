@@ -11,7 +11,7 @@ use yawc::{
     WebSocket,
 };
 
-pub async fn run(app: AppHandle, pairing: Pairing) {
+pub async fn run(app: AppHandle, mut pairing: Pairing) {
     let (outgoing, _) = broadcast::channel(32);
     let mut delay = 1;
     loop {
@@ -19,7 +19,12 @@ pub async fn run(app: AppHandle, pairing: Pairing) {
             return;
         }
         // Responses are persisted before publishing and replayed after reconnect.
-        let _ = connected(&app, &pairing, &outgoing).await;
+        if connected(&app, &mut pairing, &outgoing).await.is_err() {
+            tracing::warn!(
+                retry_seconds = delay,
+                "NWC relay disconnected; reconnecting"
+            );
+        }
         tokio::time::sleep(Duration::from_secs(delay)).await;
         delay = (delay * 2).min(30);
     }
@@ -27,7 +32,7 @@ pub async fn run(app: AppHandle, pairing: Pairing) {
 
 async fn connected(
     app: &AppHandle,
-    pairing: &Pairing,
+    pairing: &mut Pairing,
     outgoing: &broadcast::Sender<String>,
 ) -> Result<()> {
     let mut replies = outgoing.subscribe();
@@ -40,6 +45,7 @@ async fn connected(
         ),
     )
     .await??;
+    tracing::info!("NWC relay connected");
     let messages = [json!(["EVENT",serde_json::from_str::<Value>(&pairing.info)?]).to_string(),
         json!(["REQ","cashr-nwc",{"kinds":[23194],"authors":[pairing.client],"#p":[pairing.wallet],"since":protocol::now().saturating_sub(300),"limit":32}]).to_string()];
     for msg in messages {
@@ -60,13 +66,25 @@ async fn connected(
                 tokio::time::timeout(Duration::from_secs(10),socket.send(Frame::text(msg))).await??;
             }
             _ = heartbeat.tick() => {
+                // Refresh discovery for existing connections once their keys are unlocked.
+                if serde_json::from_str::<Value>(&pairing.info)?["content"] != protocol::METHODS {
+                    let state = app.state::<crate::state::AppState>();
+                    if state.session.vault().holds(signer_core::account::AccountId::new(pairing.account)) {
+                        let info = protocol::info(&super::keys(app, &state, pairing)?)?;
+                        let encoded = serde_json::to_string(&info)?;
+                        app.state::<NwcService>().store.update_info(&pairing.id, &encoded)?;
+                        pairing.info = encoded;
+                        tokio::time::timeout(Duration::from_secs(10), socket.send(Frame::text(json!(["EVENT", info]).to_string()))).await??;
+                    }
+                }
                 tokio::time::timeout(Duration::from_secs(10),socket.send(Frame::ping(Vec::new()))).await??;
             }
             frame = socket.next() => {
                 let frame = frame.ok_or_else(|| anyhow!("relay closed"))?;
                 if frame.opcode() != OpCode::Text || frame.payload().len() > 65_536 { continue; }
                 let Ok(message) = serde_json::from_slice::<Value>(frame.payload()) else { continue; };
-                if message[0] == "CLOSED" { return Err(anyhow!("subscription closed")); }
+                if message[0] == "OK" && message[2] == false { tracing::warn!("NWC relay rejected an event"); }
+                if message[0] == "CLOSED" { tracing::warn!("NWC relay closed subscription"); return Err(anyhow!("subscription closed")); }
                 if message[0] != "EVENT" || message[1] != "cashr-nwc" { continue; }
                 let Ok(event) = serde_json::from_value::<Event>(message[2].clone()) else { continue; };
                 if !protocol::valid(&event, client, wallet, pairing.created) { continue; }
@@ -76,7 +94,9 @@ async fn connected(
                 let Ok(permit) = service.limit.clone().try_acquire_owned() else { continue; };
                 tauri::async_runtime::spawn(async move {
                     let _permit = permit;
-                    let _ = super::handle(&handle, &pairing, event, &outgoing).await;
+                    if super::handle(&handle, &pairing, event, &outgoing).await.is_err() {
+                        tracing::warn!("NWC request handling failed");
+                    }
                 });
             }
         }

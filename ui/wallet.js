@@ -120,7 +120,7 @@ window.WalletUI = (() => {
       $('wallet-flow-back').hidden = true;
       for (const panel of document.querySelectorAll('[data-wallet-view]')) panel.hidden = true;
     }
-    for (const action of ['receive', 'send', 'zap']) $('wallet-show-' + action).disabled = busy || !unlocked || !opened;
+    for (const action of ['receive', 'send']) $('wallet-show-' + action).disabled = busy || !unlocked || !opened;
   }
 
   function show(name) {
@@ -164,7 +164,7 @@ window.WalletUI = (() => {
       $('wallet-address-status').textContent = '';
       $('wallet-token-info').textContent = '';
       incomingRevision++;
-      for (const id of ['wallet-invoice', 'wallet-token', 'wallet-request', 'wallet-zap-address', 'wallet-zap-recipient', 'wallet-zap-note']) $(id).value = '';
+      for (const id of ['wallet-invoice', 'wallet-token', 'wallet-request']) $(id).value = '';
       $('wallet-picker').replaceChildren();
       $('wallet-picker').hidden = true;
       $('wallet-mint').textContent = '';
@@ -414,10 +414,10 @@ window.WalletUI = (() => {
       try { await navigator.clipboard.writeText(address); }
       catch { if (revision === generation) $('wallet-address-status').textContent = 'Select and copy the address.'; }
     };
-    for (const id of ['wallet-request', 'wallet-send-amount', 'wallet-zap-address', 'wallet-zap-recipient', 'wallet-zap-amount', 'wallet-zap-note']) $(id).oninput = clearReview;
+    for (const id of ['wallet-request', 'wallet-send-amount']) $(id).oninput = clearReview;
     $('wallet-open').onclick = $('wallet-refresh').onclick = () => { clearReview(); return run('wallet_open', { retryReceiving: true }); };
     const submit = (id, action) => { $(id).onsubmit = event => { event.preventDefault(); action(); }; };
-    for (const view of ['receive', 'send', 'zap', 'nostr']) $('wallet-show-' + view).onclick = () => show(view);
+    for (const view of ['receive', 'send', 'nostr']) $('wallet-show-' + view).onclick = () => show(view);
     $('wallet-flow-back').onclick = () => show('home');
     $('wallet-choose-mint').onclick = () => show('mint');
     $('wallet-backup-hide').onclick = hideBackup;
@@ -543,10 +543,7 @@ window.WalletUI = (() => {
       $('wallet-token').value = ''; return render(data);
     }));
     submit('wallet-pay-form', () => { clearReview(); run('wallet_review', { request: $('wallet-request').value }, payment); });
-    submit('wallet-zap-form', () => {
-      clearReview();
-      run('wallet_zap', { zap: { address: $('wallet-zap-address').value, recipient: $('wallet-zap-recipient').value, amount: Number($('wallet-zap-amount').value), note: $('wallet-zap-note').value } }, payment);
-    });
+
     $('wallet-confirm').onclick = () => {
       if (busy || !review) return;
       const quote = review.quote;

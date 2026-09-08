@@ -621,6 +621,41 @@ async function refreshRelayHealth() {
 
 // ------------------------------------------------------------------ clients
 
+let walletConnectionsRevision = 0;
+async function refreshWalletConnections() {
+  const revision = ++walletConnectionsRevision;
+  const account = state.account;
+  const section = $('client-wallets');
+  const list = $('client-wallet-list');
+  list.replaceChildren();
+  section.hidden = true;
+  if (account === null) return;
+  try {
+    const connections = await call('nwc_connections', { account }, { notifyError: false });
+    if (revision !== walletConnectionsRevision || account !== state.account) return;
+    section.hidden = connections.length === 0;
+    for (const connection of connections) {
+      const card = el('div', 'card');
+      const name = el('div', 'grow');
+      name.append(el('div', null, connection.label), el('div', 'mono', 'NWC · ' + connection.mint));
+      const revoke = el('button', 'danger', 'Revoke');
+      revoke.disabled = !state.unlockedAccounts.includes(account);
+      arm(revoke, 'Revoke', async () => {
+        await call('nwc_revoke', { account, id: connection.id });
+        await refreshWalletConnections();
+      });
+      card.append(name, revoke);
+      list.append(card);
+    }
+  } catch {
+    if (revision !== walletConnectionsRevision || account !== state.account) return;
+    section.hidden = false;
+    const retry = el('button', null, 'Retry');
+    retry.onclick = refreshWalletConnections;
+    list.append(retry);
+  }
+}
+
 async function refreshClients() {
   state.clients =
     state.account === null ? [] : await call("clients", { account: state.account });
@@ -690,6 +725,7 @@ async function refreshClients() {
   }
   picker.disabled = state.clients.length === 0;
   if (state.client !== null) picker.value = String(state.client);
+  await refreshWalletConnections();
 }
 
 // -------------------------------------------------------------------- rules
@@ -1119,6 +1155,7 @@ function selectTab(name, refreshWallet = false) {
     window.WalletUI?.open(refreshWallet);
   }
   if (name === 'settings') renderLightningAddress();
+  if (name === 'clients') refreshWalletConnections();
 }
 
 async function refreshAll() {
@@ -1334,6 +1371,7 @@ function wire() {
     if (state.account === payload) window.WalletUI?.open(true);
   });
   listen('nwc://changed', async () => {
+    await refreshWalletConnections();
     await refreshPaymentPrompts();
     window.WalletUI?.open(true);
   });

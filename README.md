@@ -10,9 +10,9 @@ A macOS menu bar Cashu wallet with Nostr signing and zaps.
   Decoding stays on your Mac; choose **Connect** to pair a scanned client link.
 - Approve requests in the app or through notifications, with optional saved
   permissions per client, method, and event kind.
-- Manage connected clients, relays, and request history.
+- Manage connected Nostr apps, wallet connections, relays, and request history.
 - Use **Wallet** to fund a Cashu balance, receive tokens, pay Lightning invoices,
-  and zap a Nostr account or note using your selected Nostr identity.
+  and approve zaps from connected Nostr apps.
   Payments spend the selected Cashu balance after a separate amount/fee approval.
 
 ## NIP support
@@ -77,9 +77,9 @@ also reconciles pending payments after interruptions; a timeout does
 not mean a payment failed.
 
 Incoming collection retries use persistent backoff. Definitive mint rejections
-wait for an explicit **Refresh**; repeated failed attempts appear as one history
-entry with a concise error. Saved transaction records remain intact. The zap
-form accepts hex event IDs, `note1…`, `nevent1…`, and `nostr:` note links.
+wait for an explicit **Refresh**. Failed invoice collection attempts are excluded
+from Recent; saved transaction records remain intact. Zaps are initiated in
+connected apps and approved in Cashr.
 
 **Choose mint** keeps Minibits first and loads community recommendations from
 [Cashumints.space](https://cashumints.space/mints). It shows online Cashu mints
@@ -95,7 +95,9 @@ When Jumble requests a payment, Cashr shows its amount and maximum fees;
 approval. Cashr must be running and the Mac awake. A locked wallet asks you to
 unlock before reviewing the payment. **Revoke** removes an app's payment access.
 
-NWC supports `get_info` and `pay_invoice`, with NIP-44 and NIP-04 encryption.
+NWC supports `get_info`, `get_balance` and `pay_invoice`, with NIP-44 and NIP-04 encryption.
+Balance queries return the spendable balance at the connection's mint, even
+when a different mint is selected in Cashr.
 Each connection has separate keys; the client secret is shown once and is not
 stored by Cashr. Public connection metadata, encrypted replies and payment
 attempt hashes are retained in `nwc.sqlite`. Migrated connections also retain

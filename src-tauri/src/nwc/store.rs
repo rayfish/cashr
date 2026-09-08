@@ -97,6 +97,13 @@ impl Store {
         db.execute("INSERT INTO connections (id,account,label,mint,relay,client,wallet,created,info) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![p.id,p.account,p.label,p.mint,p.relay,p.client,p.wallet,p.created,p.info])?;
         Ok(())
     }
+    pub fn update_info(&self, id: &str, info: &str) -> Result<()> {
+        self.db().execute(
+            "UPDATE connections SET info=? WHERE id=? AND revoked=0",
+            params![info, id],
+        )?;
+        Ok(())
+    }
     pub fn active(&self, id: &str) -> bool {
         self.db()
             .query_row("SELECT revoked=0 FROM connections WHERE id=?", [id], |r| {

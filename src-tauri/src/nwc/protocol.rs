@@ -10,7 +10,14 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-pub const METHODS: &str = "get_info pay_invoice";
+pub const METHODS: &str = "get_info get_balance pay_invoice";
+
+pub fn balance(sats: u64) -> Result<Value> {
+    Ok(success(
+        "get_balance",
+        json!({"balance": sats.checked_mul(1000).ok_or_else(|| anyhow::anyhow!("balance overflow"))?}),
+    ))
+}
 pub const MAX_AGE: u64 = 300;
 
 pub fn now() -> u64 {
@@ -157,6 +164,21 @@ pub fn paid(preimage: &str, hash: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn balance_is_advertised_and_uses_millisats() {
+        let event = info(&Keys::generate()).unwrap();
+        assert!(event
+            .content
+            .split_whitespace()
+            .any(|method| method == "get_balance"));
+        assert_eq!(
+            balance(21).unwrap(),
+            success("get_balance", json!({"balance":21_000}))
+        );
+        assert_eq!(balance(0).unwrap()["result"]["balance"], 0);
+        assert!(balance(u64::MAX).is_err());
+    }
+
     fn request(client: &Keys, server: &Keys, mode: &str) -> Event {
         let text = r#"{"method":"get_info"}"#;
         let content = if mode == "nip04" {

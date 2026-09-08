@@ -683,8 +683,9 @@ button.icon[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 
 .pair-section .split button { font-size: 12px; }
 #relay-list .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #relay-list button { min-height: 26px; padding: 3px 7px; font-size: 11px; }
-#client-list .card { flex-wrap: wrap; }
-#client-list .grow { flex-basis: 100%; }
+#client-list .card, #client-wallet-list .card { flex-wrap: wrap; }
+#client-list .grow, #client-wallet-list .grow { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
+#client-wallets { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
 #rule-list .grow { overflow-wrap: anywhere; }
 #unlock-hint { padding: 0; border: 0; background: none; text-align: left; font-size: 11px; line-height: 1.5; }
 #unlock-error { padding: 8px 10px; color: var(--danger); border-color: var(--danger); }
@@ -729,7 +730,7 @@ textarea { resize: vertical; }
 .wallet-heading { position: absolute; top: 70px; right: 16px; }
 .wallet-overview { margin: 0; padding: 4px 28px 16px; gap: 8px; }
 .mint-choice { align-self: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--muted); padding: 3px 9px; min-height: 22px; }
-.wallet-shortcuts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 4px 0 16px; }
+.wallet-shortcuts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 16px; }
 .wallet-shortcuts button { border-radius: 6px; padding: 14px 4px; min-height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; font-size: 11px; }
 .wallet-shortcuts .glyph { width: 22px; height: 22px; }
 .wallet-status:empty { display: none; }
@@ -765,7 +766,9 @@ textarea { resize: vertical; }
 .payment-prompt { display: flex; flex-direction: column; gap: 12px; }
 .payment-prompt .hint { overflow-wrap: anywhere; }
 .payment-amount { font-size: 24px; }
-#wallet-nwc-copy { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+#wallet-nwc-qr-box { display: flex; flex-direction: column; gap: 16px; margin-top: 20px; }
+#tab-wallet #wallet-nwc-uri { flex: none; min-height: 200px; padding: 14px; line-height: 1.6; }
+#wallet-nwc-copy { display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 44px; }
 #nwc-prompts:not([hidden]) ~ main .wallet-heading { display: none; }
 .mint-list { display: flex; flex-direction: column; }
 .mint-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 16px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; text-align: left; }

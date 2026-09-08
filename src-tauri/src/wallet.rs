@@ -685,23 +685,13 @@ async fn view(wallet: &Wallet) -> Result<WalletView> {
     let transactions = receiving::history(wallet.list_transactions(None).await?);
     let mut history = Vec::new();
     for tx in transactions.into_iter().take(30) {
-        let error = if tx.direction == cdk::wallet::types::TransactionDirection::Incoming
-            && tx.status == cdk::wallet::types::TransactionStatus::Failed
-        {
-            match &tx.quote_id {
-                Some(id) => receiving::message(wallet, id).await?,
-                None => None,
-            }
-        } else {
-            None
-        };
         history.push(TransactionView {
             amount: tx.amount.into(),
             fee: tx.fee.into(),
             direction: format!("{:?}", tx.direction),
             status: format!("{:?}", tx.status),
             timestamp: tx.timestamp,
-            error,
+            error: None,
         });
     }
     Ok(WalletView {
@@ -1107,6 +1097,40 @@ pub(crate) async fn nwc_review(
     );
     let destination = invoice(&request)?.get_payee_pub_key().to_string();
     review(&wallet, service, account, request, destination, epoch).await
+}
+
+pub(crate) async fn nwc_balance(
+    app: &AppHandle,
+    state: &AppState,
+    service: &WalletService,
+    account: i64,
+    mint: &str,
+) -> Result<u64> {
+    let _guard = service.gate.lock().await;
+    let seed = Zeroizing::new(
+        state
+            .session
+            .vault()
+            .wallet_storage_seed(AccountId::new(account))?,
+    );
+    let original = original_wallet_path(app, state, account)?;
+    // Report only the connection's mint, regardless of the picker selection.
+    let choice = wallet_choices(&original, &seed)?
+        .into_iter()
+        .find(|choice| choice.label == mint)
+        .ok_or_else(|| anyhow!("Connection mint not found"))?;
+    let wallet = open_path(
+        slot_path(&original, &choice.id)?,
+        &seed,
+        choice.id != "original",
+    )
+    .await?;
+    let balance = wallet.total_balance().await?;
+    ensure!(
+        state.session.vault().holds(AccountId::new(account)),
+        "Wallet locked"
+    );
+    Ok(balance.into())
 }
 
 pub(crate) async fn nwc_mint(

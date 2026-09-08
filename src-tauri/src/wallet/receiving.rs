@@ -6,7 +6,6 @@ use cdk::wallet::{
 };
 use cdk::{amount::SplitTarget, Error};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 
 const NAMESPACE: &str = "cashr";
 const RETRIES: &str = "mint-retries";
@@ -65,10 +64,6 @@ async fn save(wallet: &Wallet, id: &str, retry: &Retry) -> Result<()> {
     Ok(())
 }
 
-pub async fn message(wallet: &Wallet, id: &str) -> Result<Option<String>> {
-    Ok(read(wallet, id).await?.map(|r| r.message))
-}
-
 pub async fn collect(wallet: &Wallet, manual: bool, unlocked: impl Fn() -> bool) -> Result<u64> {
     let mut received = 0u64;
     for quote in wallet.get_unissued_mint_quotes().await? {
@@ -124,30 +119,14 @@ async fn attempt(wallet: &Wallet, id: &str, unlocked: &impl Fn() -> bool) -> Res
     Ok(())
 }
 
-/// Keep all real receipts (including multiple BOLT12 receipts), but only the
-/// latest unsuccessful attempt for a quote with no successful/pending receipt.
+/// Failed invoice collection attempts are not incoming payments. Keep the
+/// underlying records for recovery, but omit them from the payment history.
 pub fn history(mut transactions: Vec<Transaction>) -> Vec<Transaction> {
     transactions.sort_by_key(|tx| std::cmp::Reverse(tx.timestamp));
-    let mut seen: HashSet<_> = transactions
-        .iter()
-        .filter(|tx| {
-            tx.direction == TransactionDirection::Incoming && tx.status != TransactionStatus::Failed
-        })
-        .filter_map(|tx| {
-            tx.quote_id
-                .as_ref()
-                .map(|id| (tx.mint_url.to_string(), id.clone()))
-        })
-        .collect();
     transactions.retain(|tx| {
-        if tx.direction != TransactionDirection::Incoming || tx.status != TransactionStatus::Failed
-        {
-            return true;
-        }
-        match &tx.quote_id {
-            Some(id) => seen.insert((tx.mint_url.to_string(), id.clone())),
-            None => true,
-        }
+        !(tx.direction == TransactionDirection::Incoming
+            && tx.status == TransactionStatus::Failed
+            && tx.quote_id.is_some())
     });
     transactions
 }
@@ -195,15 +174,14 @@ mod tests {
     }
 
     #[test]
-    fn history_groups_retries_without_hiding_distinct_payments_or_bolt12_receipts() {
-        use TransactionStatus::{Completed, Failed};
+    fn history_omits_collection_attempts_without_hiding_payments_or_bolt12_receipts() {
+        use TransactionStatus::{Completed, Failed, Pending};
         let pending = history(vec![
             transaction(Some("a"), Failed, 1),
             transaction(Some("a"), Failed, 2),
             transaction(Some("b"), Failed, 3),
         ]);
-        assert_eq!(pending.len(), 2);
-        assert_eq!(pending[1].timestamp, 2);
+        assert!(pending.is_empty());
         let mut outgoing = transaction(Some("a"), Failed, 5);
         outgoing.direction = TransactionDirection::Outgoing;
         let complete = history(vec![
@@ -211,9 +189,11 @@ mod tests {
             transaction(Some("a"), Completed, 2),
             transaction(Some("a"), Completed, 3),
             transaction(None, Failed, 4),
+            transaction(Some("b"), Pending, 6),
             outgoing,
         ]);
-        assert_eq!(complete.len(), 4);
+        assert_eq!(complete.len(), 5);
+        assert_eq!(complete[0].status, Pending);
         assert_eq!(complete.iter().filter(|t| t.status == Completed).count(), 2);
     }
 

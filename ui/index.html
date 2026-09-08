@@ -74,7 +74,7 @@
             <div class="split"><button id="wallet-mint-cancel" type="button">Cancel</button><button type="submit" class="primary">Add mint</button></div>
           </form>
         </section>
-        <div id="wallet-shortcuts" class="wallet-shortcuts"><button id="wallet-show-receive"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#arrow-down-left" /></svg><span>Receive</span></button><button id="wallet-show-send"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#arrow-up-right" /></svg><span>Send</span></button><button id="wallet-show-zap"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#zap" /></svg><span>Zap</span></button><button id="wallet-show-nostr"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#plug-zap" /></svg><span>Nostr</span></button></div>
+        <div id="wallet-shortcuts" class="wallet-shortcuts"><button id="wallet-show-receive"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#arrow-down-left" /></svg><span>Receive</span></button><button id="wallet-show-send"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#arrow-up-right" /></svg><span>Send</span></button><button id="wallet-show-nostr"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#plug-zap" /></svg><span>Nostr</span></button></div>
         <div id="wallet-actions" hidden>
 
           <section class="card stack wallet-flow" data-wallet-view="receive" hidden>
@@ -130,16 +130,7 @@
               <button type="submit">Review payment</button>
             </form>
           </section>
-          <section class="card stack wallet-flow" data-wallet-view="zap" hidden><h2 class="wallet-flow-heading">Zap a Nostr account or note</h2>
-            <form id="wallet-zap-form" class="stack">
-              <label for="wallet-zap-address">Recipient’s Lightning address</label><input id="wallet-zap-address" placeholder="alice@example.com" required />
-              <label for="wallet-zap-recipient">Recipient’s Nostr public key</label><input id="wallet-zap-recipient" placeholder="npub1…" required />
-              <label for="wallet-zap-amount">Amount in sats</label><input id="wallet-zap-amount" type="number" min="1" max="10000" step="1" value="21" required />
-              <label for="wallet-zap-note">Note (optional)</label><input id="wallet-zap-note" placeholder="note1… or nevent1…" maxlength="8192" spellcheck="false" />
 
-              <button type="submit">Prepare zap</button>
-            </form>
-          </section>
           <div id="wallet-review" class="card stack" hidden>
             <h2>Confirm payment</h2><p id="wallet-destination" class="mono"></p>
             <p id="wallet-review-amount"></p><p id="wallet-review-fee" class="hint"></p>
@@ -147,21 +138,6 @@
           </div>
           <div id="wallet-recent"><div id="wallet-pending-tokens" class="stack" hidden></div><h2>Recent</h2><div id="wallet-history" class="list"></div></div>
         </div>
-        <section class="card stack wallet-flow" data-wallet-view="nostr" aria-labelledby="wallet-nwc-heading" hidden>
-          <h2 id="wallet-nwc-heading" class="wallet-flow-heading">Connect for zaps</h2>
-          <form id="wallet-nwc-form" class="stack">
-            <label for="wallet-nwc-name">App name</label>
-            <input id="wallet-nwc-name" value="Jumble" maxlength="60" autocomplete="off" required />
-            <button type="submit" class="primary">Create connection</button>
-          </form>
-          <div id="wallet-nwc-qr-box" class="stack" hidden>
-            <canvas id="wallet-nwc-qr" class="qr-code" aria-label="Wallet connection QR" hidden></canvas>
-            <p id="wallet-nwc-qr-error" class="hint"></p>
-            <textarea id="wallet-nwc-uri" readonly aria-label="NWC connection link" spellcheck="false"></textarea>
-            <button id="wallet-nwc-copy" type="button"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#copy" /></svg> Copy connection</button>
-          </div>
-          <div id="wallet-nwc-connections" class="stack"></div>
-        </section>
         <section class="card stack wallet-flow" data-wallet-view="nostr" aria-labelledby="wallet-nostr-heading" hidden>
           <h2 id="wallet-nostr-heading" class="wallet-flow-heading">Connect a Nostr app</h2>
 
@@ -181,6 +157,21 @@
             <textarea id="wallet-nostr-uri" readonly aria-label="Nostr connection link"></textarea>
             <p class="hint">Expires in 5 minutes.</p>
           </div>
+        </section>
+        <section class="card stack wallet-flow" data-wallet-view="nostr" aria-labelledby="wallet-nwc-heading" hidden>
+          <h2 id="wallet-nwc-heading" class="wallet-flow-heading">Connect for zaps</h2>
+          <form id="wallet-nwc-form" class="stack">
+            <label for="wallet-nwc-name">App name</label>
+            <input id="wallet-nwc-name" value="Jumble" maxlength="60" autocomplete="off" required />
+            <button type="submit" class="primary">Create connection</button>
+          </form>
+          <div id="wallet-nwc-qr-box" class="stack" hidden>
+            <canvas id="wallet-nwc-qr" class="qr-code" aria-label="Wallet connection QR" hidden></canvas>
+            <p id="wallet-nwc-qr-error" class="hint"></p>
+            <textarea id="wallet-nwc-uri" rows="10" readonly aria-label="NWC connection link" spellcheck="false"></textarea>
+            <button id="wallet-nwc-copy" type="button"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="icons/lucide.svg#copy" /></svg> Copy connection</button>
+          </div>
+          <div id="wallet-nwc-connections" class="stack"></div>
         </section>
         <section class="card stack wallet-flow" data-wallet-view="token" hidden><h2 class="wallet-flow-heading">Share Cashu token</h2>
           <p id="wallet-share-amount"></p>
@@ -253,6 +244,10 @@
         <div class="page-heading"><h1>Nostr apps</h1></div>
         <div id="client-list" class="list"></div>
       <div class="split"><button id="nav-rules" data-tab="rules">Permissions</button><button id="nav-activity" data-tab="activity">Signing activity</button></div>
+        <section id="client-wallets" aria-labelledby="client-wallets-heading" hidden>
+          <h2 id="client-wallets-heading">Wallet connections</h2>
+          <div id="client-wallet-list" class="list"></div>
+        </section>
       </section>
 
       <section id="tab-rules" class="panel" role="region" aria-labelledby="rules-heading" tabindex="0">
