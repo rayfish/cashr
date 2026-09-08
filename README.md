@@ -24,6 +24,8 @@ Use a signed build for notification approval buttons. Builds use a self-signed
 `Cashr Local` certificate; public distribution requires a Developer ID certificate
 and notarization. Set `APPLE_SIGNING_IDENTITY` to use another certificate.
 
+For signed, notarized DMGs built in GitHub Actions, see [CI signing setup](.github/SIGNING.md).
+
 Run `just check` for formatting, linting, and tests. Run UI tests with
 `node --test ui/tests/*.test.cjs`. See `just --list` for all tasks.
 
