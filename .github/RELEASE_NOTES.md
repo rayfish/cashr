@@ -7,18 +7,19 @@ This first beta supports Apple Silicon Macs running macOS 12 or later.
 
 ## Install
 
-Download the DMG and drag Cashr into Applications. This build uses a self-signed
-certificate and is **not notarized by Apple**.
+Download the ZIP, double-click it to extract `Cashr.app`, then drag the app into
+Applications. A DMG is also available. This build uses a self-signed certificate
+and is **not notarized by Apple**; the ZIP avoids the separate DMG-opening step.
 
 After attempting to open Cashr, if macOS says the developer cannot be verified,
 use **System Settings → Privacy & Security → Open Anyway**, then confirm **Open**.
 See [Apple's instructions](https://support.apple.com/en-us/102445).
 You do not need to install a certificate or disable Gatekeeper.
 
-To verify the download, place `SHA256SUMS` beside the DMG and run:
+To verify your download, place `SHA256SUMS` beside the ZIP or DMG and run:
 
 ```sh
-shasum -a 256 -c SHA256SUMS
+shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
 ## Beta limitations

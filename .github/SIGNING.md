@@ -1,9 +1,9 @@
 # macOS beta builds
 
-The **macOS beta DMG** workflow builds an Apple Silicon app, signs it with our
-self-signed `Cashr Local` certificate, and uploads a DMG and `SHA256SUMS`.
+The **macOS beta release** workflow builds an Apple Silicon app, signs it with our
+self-signed `Cashr Local` certificate, and uploads a ZIP, DMG, and `SHA256SUMS`.
 It runs only when a new `v*` tag is pushed and publishes a GitHub prerelease after
-verification. Branch pushes and updates to existing tags do not build a DMG.
+verification. Branch pushes and updates to existing tags do not build downloads.
 No Apple Developer membership is needed. These builds are not notarized and
 require a macOS installation exception.
 
@@ -45,9 +45,12 @@ After the workflow and release notes are committed and the three secrets are
 configured, create and push a new version tag. The tagged commit must contain
 this workflow. Keep the version in `src-tauri/tauri.conf.json` and
 `src-tauri/Cargo.toml` in sync with the tag, and update `.github/RELEASE_NOTES.md`.
-Download the DMG and `SHA256SUMS` from the resulting GitHub prerelease.
+Download the ZIP (recommended) or DMG and `SHA256SUMS` from the resulting GitHub
+prerelease.
 
 The workflow verifies the app and DMG signatures and the disk image integrity.
+It creates the ZIP with `ditto`, extracts it, and verifies the extracted app's
+signature before uploading. The checksum file covers both downloads.
 It skips notarization and Gatekeeper acceptance checks because these builds have
 no Apple-verified developer identity. Before publishing, test a browser download,
 Touch ID, notifications, recovery, and an upgrade on a Mac without the local
@@ -55,17 +58,18 @@ signing certificate.
 
 ## Install a beta
 
-1. Download the DMG from this repository's release page and drag Cashr into Applications.
+1. Download the ZIP from this repository's release page, double-click to extract
+   `Cashr.app`, and drag it into Applications. The DMG is an alternative download.
 2. Open Cashr. If macOS blocks it because the developer cannot be verified, open
    **System Settings → Privacy & Security → Open Anyway**, then confirm **Open**.
 
 This creates an exception for Cashr. It does not require disabling Gatekeeper.
 See [Apple's instructions](https://support.apple.com/en-us/102445).
 
-To verify the download, place `SHA256SUMS` beside the DMG and run:
+To verify your download, place `SHA256SUMS` beside the ZIP or DMG and run:
 
 ```sh
-shasum -a 256 -c SHA256SUMS
+shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
 The checksum detects a mismatched download; it does not replace developer

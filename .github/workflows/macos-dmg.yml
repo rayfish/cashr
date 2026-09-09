@@ -1,4 +1,4 @@
-name: macOS beta DMG
+name: macOS beta release
 
 on:
   push:
@@ -80,16 +80,30 @@ jobs:
             codesign --verify --strict --verbose=2 "$dmg"
             hdiutil verify "$dmg"
           done
-          cd "$bundle/dmg"
-          shasum -a 256 ./*.dmg > SHA256SUMS
+      - name: Package and verify ZIP
+        run: |
+          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          downloads="$bundle/downloads"
+          version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/macos/Cashr.app/Contents/Info.plist")
+          archive="$downloads/Cashr_${version}_aarch64.zip"
+          mkdir -p "$downloads"
+          cp "$bundle"/dmg/*.dmg "$downloads/"
+          ditto -c -k --sequesterRsrc --keepParent "$bundle/macos/Cashr.app" "$archive"
+          zip_check=$(mktemp -d "$RUNNER_TEMP/cashr-zip-check.XXXXXX")
+          trap 'rm -rf "$zip_check"' EXIT
+          ditto -x -k "$archive" "$zip_check"
+          codesign --verify --deep --strict --verbose=2 "$zip_check/Cashr.app"
+          cd "$downloads"
+          shasum -a 256 ./*.zip ./*.dmg > SHA256SUMS
 
-      - name: Upload signed DMG
+      - name: Upload release downloads
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Cashr-beta-macOS-Apple-Silicon-${{ github.sha }}
           path: |
-            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/SHA256SUMS
+            src-tauri/target/aarch64-apple-darwin/release/bundle/downloads/*.zip
+            src-tauri/target/aarch64-apple-darwin/release/bundle/downloads/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/downloads/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
 
@@ -98,11 +112,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
+          downloads="src-tauri/target/aarch64-apple-darwin/release/bundle/downloads"
           gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --prerelease \
             --title "Cashr $RELEASE_TAG (beta)" \
             --notes-file .github/RELEASE_NOTES.md \
-            "$bundle"/*.dmg "$bundle/SHA256SUMS"
+            "$downloads"/*.zip "$downloads"/*.dmg "$downloads/SHA256SUMS"
