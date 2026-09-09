@@ -21,10 +21,12 @@ just dev      # Run from source
 
 Install the bundle from `src-tauri/target/release/bundle` in `/Applications`.
 Use a signed build for notification approval buttons. Builds use a self-signed
-`Cashr Local` certificate; public distribution requires a Developer ID certificate
-and notarization. Set `APPLE_SIGNING_IDENTITY` to use another certificate.
+`Cashr Local` certificate. Beta builds can be shared directly, but macOS will warn
+that the developer cannot be verified. Developer ID signing and notarization
+remove that warning. Set `APPLE_SIGNING_IDENTITY` to use another certificate.
 
-For signed, notarized DMGs built in GitHub Actions, see [CI signing setup](.github/SIGNING.md).
+For self-signed beta DMGs built in GitHub Actions and installation instructions,
+see [CI signing setup](.github/SIGNING.md).
 
 Run `just check` for formatting, linting, and tests. Run UI tests with
 `node --test ui/tests/*.test.cjs`. See `just --list` for all tasks.

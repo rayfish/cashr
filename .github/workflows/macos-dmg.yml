@@ -1,14 +1,17 @@
-name: Signed macOS DMG
+name: macOS beta DMG
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
-    name: Sign and notarize (Apple Silicon)
+    if: github.event.created == true && github.event.deleted == false
+    name: Self-sign beta (Apple Silicon)
     runs-on: macos-latest
     timeout-minutes: 90
     defaults:
@@ -20,20 +23,13 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Missing repository secret: $name. See .github/SIGNING.md."
               exit 1
             fi
           done
-          if [[ "$APPLE_SIGNING_IDENTITY" != "Developer ID Application: "* ]]; then
-            echo "::error::APPLE_SIGNING_IDENTITY must name a Developer ID Application certificate."
-            exit 1
-          fi
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -48,33 +44,64 @@ jobs:
           brew install openssl@3
           cargo install tauri-cli --locked --version 2.11.4
 
-      - name: Build, sign, and notarize
+      # Tauri's certificate importer expects an Apple team identity, so import
+      # our self-signed beta identity explicitly instead.
+      - name: Import beta signing identity
+        uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Trust beta certificate on the build runner
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          keychain="$HOME/Library/Keychains/signing_temp.keychain-db"
+          certificate="$RUNNER_TEMP/cashr-signing.pem"
+          trap 'rm -f "$certificate"' EXIT
+          security find-certificate -c "$APPLE_SIGNING_IDENTITY" -p "$keychain" > "$certificate"
+          # Trust only for code signing on this disposable runner.
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k "$keychain" "$certificate"
+          security find-identity -v -p codesigning "$keychain" | grep -F -- "$APPLE_SIGNING_IDENTITY"
+
+      - name: Build self-signed beta
         working-directory: src-tauri
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: cargo tauri build --locked --target aarch64-apple-darwin
 
       - name: Verify app and DMG
         run: |
           bundle="src-tauri/target/aarch64-apple-darwin/release/bundle"
           codesign --verify --deep --strict --verbose=2 "$bundle/macos/Cashr.app"
-          xcrun stapler validate "$bundle/macos/Cashr.app"
-          spctl --assess --type execute --verbose=4 "$bundle/macos/Cashr.app"
           shopt -s failglob
           for dmg in "$bundle"/dmg/*.dmg; do
             codesign --verify --strict --verbose=2 "$dmg"
             hdiutil verify "$dmg"
           done
+          cd "$bundle/dmg"
+          shasum -a 256 ./*.dmg > SHA256SUMS
 
       - name: Upload signed DMG
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Cashr-macOS-Apple-Silicon-${{ github.sha }}
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          name: Cashr-beta-macOS-Apple-Silicon-${{ github.sha }}
+          path: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg"
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --prerelease \
+            --title "Cashr $RELEASE_TAG (beta)" \
+            --notes-file .github/RELEASE_NOTES.md \
+            "$bundle"/*.dmg "$bundle/SHA256SUMS"
