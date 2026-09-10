@@ -78,6 +78,15 @@ fn previous_directory(destination: &Path) -> Result<Option<PathBuf>> {
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| anyhow!("Invalid application namespace"))?;
+    if name == "xyz.rayfish.cashr" {
+        let previous = parent.join("com.dgrr.cashr");
+        // Prefer the last Cashr installation over any older prototype copies.
+        // If Cashr was never opened, retain the previous namespace discovery.
+        if previous.join("signer.db").is_file() {
+            return Ok(Some(previous));
+        }
+        return previous_directory(&previous);
+    }
     let publisher = name
         .rsplit_once('.')
         .ok_or_else(|| anyhow!("Invalid application namespace"))?
@@ -110,6 +119,10 @@ fn previous_directory(destination: &Path) -> Result<Option<PathBuf>> {
 }
 
 fn copy_previous(source: &Path, destination: &Path) -> Result<()> {
+    ensure!(
+        fs::symlink_metadata(source)?.file_type().is_dir(),
+        "Cannot migrate a wallet data directory that is not a regular directory"
+    );
     let namespace = source
         .file_name()
         .and_then(|s| s.to_str())
@@ -128,13 +141,17 @@ fn copy_previous(source: &Path, destination: &Path) -> Result<()> {
     }
     let result = (|| {
         copy_directory(source, &stage)?;
-        write_progress(
-            &stage,
-            &Progress {
-                namespace: namespace.into(),
-                completed: BTreeSet::new(),
-            },
-        )?;
+        // Changing only the publisher does not change the cashr encryption
+        // namespace. Preserve any older, partially completed conversion marker.
+        if namespace != "cashr" && !stage.join(MARKER).exists() {
+            write_progress(
+                &stage,
+                &Progress {
+                    namespace: namespace.into(),
+                    completed: BTreeSet::new(),
+                },
+            )?;
+        }
         if destination.exists() {
             fs::remove_dir(destination)
                 .context("Cashr's destination must be empty before migration")?;
@@ -447,6 +464,107 @@ mod tests {
         }
         assert!(previous_directory(&root.path().join("com.example.cashr")).is_err());
     }
+
+    fn installation(root: &Path, bundle: &str) -> PathBuf {
+        let directory = root.join(bundle);
+        fs::create_dir_all(directory.join("keys")).unwrap();
+        fs::write(directory.join("signer.db"), "fixture metadata").unwrap();
+        fs::write(directory.join("unlock.passphrase"), "synthetic device key").unwrap();
+        directory
+    }
+
+    #[test]
+    fn publisher_change_preserves_wallets_and_prefers_cashr_over_older_copies() {
+        let root = tempfile::tempdir().unwrap();
+        let old = installation(root.path(), "com.dgrr.cashr");
+        installation(root.path(), "com.dgrr.byrgi");
+        let new = root.path().join("xyz.rayfish.cashr");
+        fs::write(old.join("keys/1"), "encrypted key fixture").unwrap();
+        fs::write(old.join("nwc.sqlite"), "pairings and replay fixture").unwrap();
+        fs::write(old.join("signer.db-wal"), "pending metadata fixture").unwrap();
+        fs::create_dir(old.join("wallets")).unwrap();
+        let key = password("cashr", &[1; 64]);
+        old_database(
+            &old.join("wallets/account.sqlite"),
+            &key,
+            "cashr",
+            &[2; 64],
+            "https://mint.example",
+        );
+        assert_eq!(previous_directory(&new).unwrap(), Some(old.clone()));
+        copy_previous(&old, &new).unwrap();
+        for file in [
+            "signer.db",
+            "signer.db-wal",
+            "unlock.passphrase",
+            "keys/1",
+            "nwc.sqlite",
+            "wallets/account.sqlite",
+        ] {
+            assert_eq!(
+                fs::read(old.join(file)).unwrap(),
+                fs::read(new.join(file)).unwrap(),
+                "{file} changed during transfer"
+            );
+        }
+        assert!(!new.join(MARKER).exists());
+        let wallet = open_keyed(&new.join("wallets/account.sqlite"), &key).unwrap();
+        assert_eq!(
+            wallet
+                .query_row("SELECT sum(amount) FROM proofs", [], |r| r.get::<_, u64>(0))
+                .unwrap(),
+            100000
+        );
+        assert!(previous_directory(&new).unwrap().is_none());
+        assert!(copy_previous(&old, &new).is_err());
+    }
+
+    #[test]
+    fn publisher_change_keeps_an_unfinished_namespace_conversion() {
+        let root = tempfile::tempdir().unwrap();
+        let old = installation(root.path(), "com.dgrr.cashr");
+        let new = root.path().join("xyz.rayfish.cashr");
+        write_progress(
+            &old,
+            &Progress {
+                namespace: "byrgi".into(),
+                completed: BTreeSet::from(["converted-account".into()]),
+            },
+        )
+        .unwrap();
+        copy_previous(&old, &new).unwrap();
+        assert_eq!(
+            fs::read(old.join(MARKER)).unwrap(),
+            fs::read(new.join(MARKER)).unwrap()
+        );
+    }
+
+    #[test]
+    fn publisher_change_discovers_older_installs_and_respects_existing_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let old = installation(root.path(), "com.dgrr.byrgi");
+        let new = root.path().join("xyz.rayfish.cashr");
+        assert_eq!(previous_directory(&new).unwrap(), Some(old.clone()));
+        copy_previous(&old, &new).unwrap();
+        let progress: Progress =
+            serde_json::from_slice(&fs::read(new.join(MARKER)).unwrap()).unwrap();
+        assert_eq!(progress.namespace, "byrgi");
+        assert!(previous_directory(&new).unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publisher_change_rejects_a_symlinked_source() {
+        let root = tempfile::tempdir().unwrap();
+        let source = installation(root.path(), "elsewhere");
+        let link = root.path().join("com.dgrr.cashr");
+        std::os::unix::fs::symlink(&source, &link).unwrap();
+        let new = root.path().join("xyz.rayfish.cashr");
+        assert_eq!(previous_directory(&new).unwrap(), Some(link.clone()));
+        assert!(copy_previous(&link, &new).is_err());
+        assert!(!new.exists());
+    }
+
     #[test]
     fn conversion_preserves_funds_words_counters_and_active_mint_and_can_resume() {
         let root = tempfile::tempdir().unwrap();
