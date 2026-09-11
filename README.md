@@ -74,9 +74,10 @@ Cashr is an early beta. Start with a separate identity and a small balance.
 - **Local key protection:** account keys and wallet databases are encrypted, but the device password is stored in plaintext in `unlock.passphrase`. Someone who can read that file and the encrypted files can decrypt them. Touch ID is enforced by the app; keys are not protected by Secure Enclave storage.
 - **Pending payments:** check transaction history after a timeout before trying again. NWC does not automatically resubmit a payment with an unknown result. Its relay connections do not yet have the signer's pong-timeout detection.
 
-On upgrade, Cashr copies existing data from `com.dgrr.cashr` into the new data
-directory on first launch, keeping the original as a backup. Quit any older Cashr
-instance before opening the updated app.
+On first launch after upgrading, Cashr renames `com.dgrr.cashr` to
+`xyz.rayfish.cashr` if the new data directory is absent or empty. Existing data
+in the new directory is never overwritten. Quit any older Cashr instance before
+opening the updated app.
 
 ## Build from source
 

@@ -39,7 +39,7 @@ pub fn prepare(app: &AppHandle) -> Result<()> {
         return Ok(());
     };
     // The source has encrypted SQLite files, so its owner must be closed before
-    // taking a filesystem snapshot including WAL files. Never stop it for the user.
+    // moving or snapshotting its files, including WAL files. Never stop it for the user.
     #[cfg(target_os = "macos")]
     {
         let output = std::process::Command::new("/usr/bin/pgrep")
@@ -58,7 +58,49 @@ pub fn prepare(app: &AppHandle) -> Result<()> {
             "Quit the other Cashr instance before transferring wallet data, then open Cashr again."
         );
     }
-    copy_previous(&source, &destination)
+    migrate_previous(&source, &destination)
+}
+
+fn migrate_previous(source: &Path, destination: &Path) -> Result<()> {
+    if source.file_name().is_some_and(|s| s == "com.dgrr.cashr")
+        && destination
+            .file_name()
+            .is_some_and(|s| s == "xyz.rayfish.cashr")
+    {
+        return rename_previous(source, destination);
+    }
+    // Older app names also need encryption/schema conversion after unlock.
+    copy_previous(source, destination)
+}
+
+fn rename_previous(source: &Path, destination: &Path) -> Result<()> {
+    ensure!(
+        fs::symlink_metadata(source)?.file_type().is_dir(),
+        "Cannot migrate a wallet data directory that is not a regular directory"
+    );
+    let parent = destination
+        .parent()
+        .ok_or_else(|| anyhow!("Missing application data directory"))?;
+    ensure!(
+        source.parent() == Some(parent),
+        "Wallet data directories must share a parent for migration"
+    );
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.file_type().is_dir() && fs::read_dir(destination)?.next().is_none(),
+                "Cashr's destination must be empty before migration"
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    // On macOS this atomically replaces an absent or empty directory, but
+    // refuses a nonempty destination even if it appeared after the check.
+    // All files, permissions and conversion markers retain their identities.
+    fs::rename(source, destination)
+        .context("Could not rename the previous Cashr data directory")?;
+    sync_directory(parent)
 }
 
 fn previous_directory(destination: &Path) -> Result<Option<PathBuf>> {
@@ -492,17 +534,33 @@ mod tests {
             "https://mint.example",
         );
         assert_eq!(previous_directory(&new).unwrap(), Some(old.clone()));
-        copy_previous(&old, &new).unwrap();
-        for file in [
+        let files = [
             "signer.db",
             "signer.db-wal",
             "unlock.passphrase",
             "keys/1",
             "nwc.sqlite",
             "wallets/account.sqlite",
-        ] {
+        ];
+        let contents: Vec<_> = files
+            .iter()
+            .map(|file| fs::read(old.join(file)).unwrap())
+            .collect();
+        #[cfg(unix)]
+        let original_inode = {
+            use std::os::unix::fs::MetadataExt;
+            fs::metadata(&old).unwrap().ino()
+        };
+        migrate_previous(&old, &new).unwrap();
+        assert!(!old.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(fs::metadata(&new).unwrap().ino(), original_inode);
+        }
+        for (file, original) in files.iter().zip(contents) {
             assert_eq!(
-                fs::read(old.join(file)).unwrap(),
+                original,
                 fs::read(new.join(file)).unwrap(),
                 "{file} changed during transfer"
             );
@@ -516,7 +574,7 @@ mod tests {
             100000
         );
         assert!(previous_directory(&new).unwrap().is_none());
-        assert!(copy_previous(&old, &new).is_err());
+        assert!(migrate_previous(&old, &new).is_err());
     }
 
     #[test]
@@ -532,11 +590,10 @@ mod tests {
             },
         )
         .unwrap();
-        copy_previous(&old, &new).unwrap();
-        assert_eq!(
-            fs::read(old.join(MARKER)).unwrap(),
-            fs::read(new.join(MARKER)).unwrap()
-        );
+        let original = fs::read(old.join(MARKER)).unwrap();
+        migrate_previous(&old, &new).unwrap();
+        assert!(!old.exists());
+        assert_eq!(original, fs::read(new.join(MARKER)).unwrap());
     }
 
     #[test]
@@ -545,7 +602,8 @@ mod tests {
         let old = installation(root.path(), "com.dgrr.byrgi");
         let new = root.path().join("xyz.rayfish.cashr");
         assert_eq!(previous_directory(&new).unwrap(), Some(old.clone()));
-        copy_previous(&old, &new).unwrap();
+        migrate_previous(&old, &new).unwrap();
+        assert!(old.exists());
         let progress: Progress =
             serde_json::from_slice(&fs::read(new.join(MARKER)).unwrap()).unwrap();
         assert_eq!(progress.namespace, "byrgi");
@@ -561,8 +619,53 @@ mod tests {
         std::os::unix::fs::symlink(&source, &link).unwrap();
         let new = root.path().join("xyz.rayfish.cashr");
         assert_eq!(previous_directory(&new).unwrap(), Some(link.clone()));
-        assert!(copy_previous(&link, &new).is_err());
+        assert!(migrate_previous(&link, &new).is_err());
         assert!(!new.exists());
+    }
+
+    #[test]
+    fn publisher_rename_accepts_an_empty_destination() {
+        let root = tempfile::tempdir().unwrap();
+        let old = installation(root.path(), "com.dgrr.cashr");
+        let new = root.path().join("xyz.rayfish.cashr");
+        fs::create_dir(&new).unwrap();
+        assert_eq!(previous_directory(&new).unwrap(), Some(old.clone()));
+        migrate_previous(&old, &new).unwrap();
+        assert!(!old.exists());
+        assert!(new.join("signer.db").exists());
+        assert!(previous_directory(&new).unwrap().is_none());
+    }
+
+    #[test]
+    fn publisher_rename_keeps_both_installations_when_destination_is_in_use() {
+        let root = tempfile::tempdir().unwrap();
+        let old = installation(root.path(), "com.dgrr.cashr");
+        let new = installation(root.path(), "xyz.rayfish.cashr");
+        fs::write(new.join("signer.db"), "new wallet fixture").unwrap();
+        assert!(previous_directory(&new).unwrap().is_none());
+        assert!(migrate_previous(&old, &new).is_err());
+        assert_eq!(
+            fs::read(old.join("signer.db")).unwrap(),
+            b"fixture metadata"
+        );
+        assert_eq!(
+            fs::read(new.join("signer.db")).unwrap(),
+            b"new wallet fixture"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publisher_rename_rejects_a_symlinked_destination_without_moving_data() {
+        let root = tempfile::tempdir().unwrap();
+        let old = installation(root.path(), "com.dgrr.cashr");
+        let new = root.path().join("xyz.rayfish.cashr");
+        let elsewhere = root.path().join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &new).unwrap();
+        assert!(migrate_previous(&old, &new).is_err());
+        assert!(old.join("signer.db").exists());
+        assert!(fs::read_dir(&elsewhere).unwrap().next().is_none());
     }
 
     #[test]
